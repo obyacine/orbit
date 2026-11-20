@@ -14,7 +14,7 @@ from rest_framework import status
 from rest_framework.response import Response
 
 from plane.app.permissions import ROLE, allow_permission
-from plane.db.models import APIToken, ProjectMember, ProjectUserProperty
+from plane.db.models import APIToken, Project, ProjectMember, ProjectUserProperty, WorkspaceMember
 from plane.app.views.base import BaseAPIView
 
 _TIMEOUT_SECONDS = 180  # a report = platform reads + up to two LLM calls; a baseline push creates many objects
@@ -22,15 +22,18 @@ _READ = [ROLE.ADMIN, ROLE.MEMBER, ROLE.GUEST]
 _WRITE = [ROLE.ADMIN, ROLE.MEMBER]
 
 
-def _agent(method, path, payload=None, params=None):
+def _agent(method, path, payload=None, params=None, workspace=None):
     url = f"{settings.ORBIT_AI_SERVICE_URL.rstrip('/')}{path}"
+    headers = {"X-Orbit-Token": settings.ORBIT_INTERNAL_TOKEN}
+    if workspace:  # the agent works in the workspace of the project being opened
+        headers["X-Orbit-Workspace"] = workspace
     try:
         resp = requests.request(
             method,
             url,
             json=payload,
             params=params,
-            headers={"X-Orbit-Token": settings.ORBIT_INTERNAL_TOKEN},
+            headers=headers,
             timeout=_TIMEOUT_SECONDS,
         )
     except requests.RequestException:
@@ -49,21 +52,30 @@ def _agent(method, path, payload=None, params=None):
 
 
 def _ensure_agent_member(slug, project_id):
-    """The agent reads and writes through the public API with its own key: make it a member of the project."""
-    token = APIToken.objects.filter(token=settings.ORBIT_AGENT_API_KEY, is_active=True).select_related("workspace").first()
-    if not token or not token.workspace or token.workspace.slug != slug:
+    """The agent reads and writes through the public API with its own key, in any workspace:
+    make its account a member of the project's workspace and of the project."""
+    token = APIToken.objects.filter(token=settings.ORBIT_AGENT_API_KEY, is_active=True).select_related("user").first()
+    project = Project.objects.filter(id=project_id, workspace__slug=slug).select_related("workspace").first()
+    if not token or not project:
         return
+    workspace, agent = project.workspace, token.user
+    ws_member, _ = WorkspaceMember.objects.get_or_create(
+        workspace=workspace, member=agent, defaults={"role": ROLE.MEMBER.value}
+    )
+    if not ws_member.is_active:
+        ws_member.is_active = True
+        ws_member.save(update_fields=["is_active"])
     member, _ = ProjectMember.objects.get_or_create(
-        project_id=project_id, member=token.user, defaults={"role": ROLE.ADMIN.value, "workspace": token.workspace}
+        project=project, member=agent, defaults={"role": ROLE.ADMIN.value, "workspace": workspace}
     )
     if not member.is_active or member.role != ROLE.ADMIN.value:
         member.is_active, member.role = True, ROLE.ADMIN.value
         member.save(update_fields=["is_active", "role"])
-    ProjectUserProperty.objects.get_or_create(project_id=project_id, user=token.user, workspace=token.workspace)
+    ProjectUserProperty.objects.get_or_create(project=project, user=agent, workspace=workspace)
 
 
-def _forward(method, path, payload=None, params=None):
-    data, error = _agent(method, path, payload, params)
+def _forward(method, path, payload=None, params=None, workspace=None):
+    data, error = _agent(method, path, payload, params, workspace)
     return error or Response(data, status=status.HTTP_200_OK)
 
 
@@ -88,7 +100,7 @@ class OrbitAgentAnalysisEndpoint(BaseAPIView):
     @allow_permission(_READ)
     def get(self, request, slug, project_id):
         _ensure_agent_member(slug, project_id)
-        return _forward("GET", f"/projects/{project_id}/analysis")
+        return _forward("GET", f"/projects/{project_id}/analysis", workspace=slug)
 
 
 class OrbitAgentReportsEndpoint(BaseAPIView):
@@ -104,7 +116,7 @@ class OrbitAgentGenerateReportEndpoint(BaseAPIView):
         if report_type not in ("progress", "situation"):
             return Response({"error": "Type de rapport inconnu"}, status=status.HTTP_400_BAD_REQUEST)
         _ensure_agent_member(slug, project_id)
-        return _forward("POST", f"/projects/{project_id}/reports/{report_type}")
+        return _forward("POST", f"/projects/{project_id}/reports/{report_type}", workspace=slug)
 
 
 class OrbitAgentApproveReportEndpoint(BaseAPIView):
@@ -160,7 +172,7 @@ class OrbitAgentBaselineValidateEndpoint(BaseAPIView):
             return error
         _ensure_agent_member(slug, project_id)
         payload = {"validated_by": request.user.display_name, "content": request.data.get("content")}
-        return _forward("POST", f"/baselines/{baseline_id}/validate", payload)
+        return _forward("POST", f"/baselines/{baseline_id}/validate", payload, workspace=slug)
 
 
 _MAX_UPLOAD_BYTES = 10 * 1024 * 1024

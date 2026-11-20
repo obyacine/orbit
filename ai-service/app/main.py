@@ -1,3 +1,4 @@
+import logging
 import re
 from typing import Annotated
 
@@ -15,6 +16,8 @@ from app.module2.rules import detect_anomalies
 from app.module2.snapshot import ProjectSnapshot, build_snapshot
 from app.plane_client import PlaneClient, PlaneError
 
+log = logging.getLogger(__name__)
+
 app = FastAPI(title="Orbit AI service", version="0.2.0")
 
 
@@ -28,6 +31,22 @@ def _method(project_id: str) -> ProjectMethod:
     return ProjectMethod.from_dict(saved["config"] if saved else None)
 
 
+def _tracker_error(
+    exc: PlaneError, context: str = "Lecture du projet impossible", workspace: str | None = None
+) -> HTTPException:
+    """A message a PM can act on; the technical detail goes to the logs."""
+    log.warning("%s: %s", context, exc)
+    slug = workspace or get_settings().plane_workspace_slug
+    if exc.status == 404:
+        return HTTPException(status_code=404, detail=f"Projet introuvable dans le workspace « {slug} ».")
+    if exc.status in (401, 403):
+        return HTTPException(
+            status_code=502,
+            detail="L'agent IA n'a pas accès à ce projet : vérifiez sa clé API dans la configuration du serveur.",
+        )
+    return HTTPException(status_code=502, detail=f"{context} : Orbit n'a pas répondu correctement, réessayez.")
+
+
 def _link_baseline(snapshot: ProjectSnapshot) -> None:
     """Tie each work item to the deliverable of the validated baseline it comes from."""
     validated = db.latest_validated_baseline(snapshot.project_id)
@@ -37,11 +56,13 @@ def _link_baseline(snapshot: ProjectSnapshot) -> None:
             i.baseline_id = by_issue.get(i.id)
 
 
-def _load(project_id: str, with_comments: bool = False) -> tuple[ProjectSnapshot, dict[str, str], ProjectMethod]:
+def _load(
+    project_id: str, with_comments: bool = False, workspace: str | None = None
+) -> tuple[ProjectSnapshot, dict[str, str], ProjectMethod]:
     """Snapshot classified with the PM's method, plus the last comment of each blocked issue (reason of the block)."""
     method = _method(project_id)
     try:
-        with PlaneClient() as client:
+        with PlaneClient(workspace_slug=workspace) as client:
             snapshot = classify(build_snapshot(client, project_id), method)
             _link_baseline(snapshot)
             comments: dict[str, str] = {}
@@ -55,7 +76,7 @@ def _load(project_id: str, with_comments: bool = False) -> tuple[ProjectSnapshot
                         comments[b.key] = text.strip()
             return snapshot, comments, method
     except PlaneError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise _tracker_error(exc, workspace=workspace) from exc
 
 
 @app.get("/health")
@@ -99,17 +120,21 @@ def set_project_method(project_id: str, body: MethodBody, x_orbit_token: str | N
 
 
 @app.get("/projects/{project_id}/snapshot")
-def project_snapshot(project_id: str, x_orbit_token: str | None = Header(default=None)) -> dict:
+def project_snapshot(
+    project_id: str, x_orbit_token: str | None = Header(default=None), x_orbit_workspace: str | None = Header(default=None)
+) -> dict:
     """Normalized view of a Plane project (debug / input of metrics and reports)."""
     _check_internal_token(x_orbit_token)
-    return _load(project_id)[0].to_dict()
+    return _load(project_id, workspace=x_orbit_workspace)[0].to_dict()
 
 
 @app.get("/projects/{project_id}/analysis")
-def project_analysis(project_id: str, x_orbit_token: str | None = Header(default=None)) -> dict:
+def project_analysis(
+    project_id: str, x_orbit_token: str | None = Header(default=None), x_orbit_workspace: str | None = Header(default=None)
+) -> dict:
     """Computed metrics + anomaly register for a project."""
     _check_internal_token(x_orbit_token)
-    snapshot, _, method = _load(project_id)
+    snapshot, _, method = _load(project_id, workspace=x_orbit_workspace)
     metrics = compute_metrics(snapshot, method=method)
     anomalies = detect_anomalies(snapshot, metrics, method=method)
     return {
@@ -121,19 +146,23 @@ def project_analysis(project_id: str, x_orbit_token: str | None = Header(default
 
 
 @app.post("/projects/{project_id}/reports/progress")
-def generate_progress_report(project_id: str, x_orbit_token: str | None = Header(default=None)) -> dict:
+def generate_progress_report(
+    project_id: str, x_orbit_token: str | None = Header(default=None), x_orbit_workspace: str | None = Header(default=None)
+) -> dict:
     """Draft progress report (Team Lead -> PM)."""
     _check_internal_token(x_orbit_token)
-    snapshot, comments, method = _load(project_id, with_comments=True)
+    snapshot, comments, method = _load(project_id, with_comments=True, workspace=x_orbit_workspace)
     report = build_progress_report(snapshot, compute_metrics(snapshot, method=method), comments, method)
     return db.save_report(project_id, "progress", report, to_markdown(report))
 
 
 @app.post("/projects/{project_id}/reports/situation")
-def generate_situation_report(project_id: str, x_orbit_token: str | None = Header(default=None)) -> dict:
+def generate_situation_report(
+    project_id: str, x_orbit_token: str | None = Header(default=None), x_orbit_workspace: str | None = Header(default=None)
+) -> dict:
     """Draft situation report (PM -> COPIL), built on the latest approved progress report if any."""
     _check_internal_token(x_orbit_token)
-    snapshot, _, method = _load(project_id)
+    snapshot, _, method = _load(project_id, workspace=x_orbit_workspace)
     metrics = compute_metrics(snapshot, method=method)
     parent = db.latest_report(project_id, "progress", status="approved")
     anomalies = detect_anomalies(snapshot, metrics, method=method)
@@ -233,7 +262,9 @@ class ValidateBody(BaseModel):
 
 
 @app.post("/baselines/{baseline_id}/validate")
-def validate_and_push_baseline(baseline_id: str, body: ValidateBody, x_orbit_token: str | None = Header(default=None)) -> dict:
+def validate_and_push_baseline(
+    baseline_id: str, body: ValidateBody, x_orbit_token: str | None = Header(default=None), x_orbit_workspace: str | None = Header(default=None)
+) -> dict:
     """Freeze the baseline and create it in the tracker: labels, modules, cycles, work items."""
     _check_internal_token(x_orbit_token)
     found = _draft_or_error(baseline_id)
@@ -245,10 +276,10 @@ def validate_and_push_baseline(baseline_id: str, body: ValidateBody, x_orbit_tok
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Baseline invalide : {exc}") from exc
     try:
-        with PlaneClient() as client:
+        with PlaneClient(workspace_slug=x_orbit_workspace) as client:
             pushed = m1.push(client, found["project_id"], baseline, method)
     except PlaneError as exc:
-        raise HTTPException(status_code=502, detail=f"Création dans Orbit impossible : {exc}") from exc
+        raise _tracker_error(exc, "Création dans Orbit impossible", x_orbit_workspace) from exc
     # The project is now run with the method the baseline was built for.
     db.save_method(found["project_id"], method.to_dict(), body.validated_by)
     result = db.validate_baseline(baseline_id, body.validated_by, baseline.model_dump(), pushed["work_items"])

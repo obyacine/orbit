@@ -178,3 +178,56 @@ def test_method_api(tmp_path, monkeypatch):
         assert len(client.get("/methods").json()["prioritization"]) == len(FRAMEWORKS)
     finally:
         get_settings.cache_clear()
+
+
+def test_missing_project_gives_a_clear_message(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main
+    from app.config import get_settings
+    from app.plane_client import PlaneError
+
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orbit.db"))
+    monkeypatch.setenv("ORBIT_INTERNAL_TOKEN", "t")
+    monkeypatch.setenv("PLANE_WORKSPACE_SLUG", "orbit")
+    get_settings.cache_clear()
+
+    def not_found(*a, **k):
+        raise PlaneError("GET", "projects/x/", 404, "not found")
+
+    monkeypatch.setattr(main, "build_snapshot", not_found)
+    try:
+        r = TestClient(main.app).get("/projects/x/analysis", headers={"X-Orbit-Token": "t"})
+        assert r.status_code == 404
+        assert "workspace « orbit »" in r.json()["detail"] and "Plane" not in r.json()["detail"]
+        other = TestClient(main.app).get("/projects/x/analysis", headers={"X-Orbit-Token": "t", "X-Orbit-Workspace": "projet-test"})
+        assert "workspace « projet-test »" in other.json()["detail"]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_agent_reads_the_workspace_of_the_opened_project(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app import main
+    from app.config import get_settings
+    from app.module2.snapshot import ProjectSnapshot
+
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "orbit.db"))
+    monkeypatch.setenv("ORBIT_INTERNAL_TOKEN", "t")
+    monkeypatch.setenv("PLANE_WORKSPACE_SLUG", "orbit")
+    monkeypatch.setenv("PLANE_API_KEY", "k")
+    get_settings.cache_clear()
+    seen = {}
+
+    def fake_snapshot(client, project_id):
+        seen["base_url"] = str(client._http.base_url)
+        return ProjectSnapshot(project_id, "P", "P", [], [], [], None)
+
+    monkeypatch.setattr(main, "build_snapshot", fake_snapshot)
+    try:
+        r = TestClient(main.app).get("/projects/p/analysis", headers={"X-Orbit-Token": "t", "X-Orbit-Workspace": "projet-test"})
+        assert r.status_code == 200
+        assert seen["base_url"].endswith("/workspaces/projet-test/")
+    finally:
+        get_settings.cache_clear()
