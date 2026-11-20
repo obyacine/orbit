@@ -626,3 +626,9 @@ if ENABLE_DRF_SPECTACULAR:
     REST_FRAMEWORK["DEFAULT_SCHEMA_CLASS"] = "drf_spectacular.openapi.AutoSchema"
     INSTALLED_APPS.append("drf_spectacular")
     from .openapi import SPECTACULAR_SETTINGS  # noqa: F401
+
+# Orbit AI agent (ai-service). From the API container, the host machine is host.docker.internal.
+ORBIT_AI_SERVICE_URL = os.environ.get("ORBIT_AI_SERVICE_URL", "http://host.docker.internal:8001")
+ORBIT_INTERNAL_TOKEN = os.environ.get("ORBIT_INTERNAL_TOKEN", "")
+# API key the agent uses on the public API: identifies its account, added to projects it works on.
+ORBIT_AGENT_API_KEY = os.environ.get("ORBIT_AGENT_API_KEY", "")

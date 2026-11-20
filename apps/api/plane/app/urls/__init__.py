@@ -22,6 +22,7 @@ from .webhook import urlpatterns as webhook_urls
 from .workspace import urlpatterns as workspace_urls
 from .timezone import urlpatterns as timezone_urls
 from .exporter import urlpatterns as exporter_urls
+from .orbit_agent import urlpatterns as orbit_agent_urls
 
 urlpatterns = [
     *analytic_urls,
@@ -30,6 +31,7 @@ urlpatterns = [
     *estimate_urls,
     *external_urls,
     *intake_urls,
+    *orbit_agent_urls,
     *issue_urls,
     *module_urls,
     *notification_urls,
