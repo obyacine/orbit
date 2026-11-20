@@ -12,14 +12,14 @@ SPECTACULAR_SETTINGS = {
     # ========================================================================
     # Basic API Information
     # ========================================================================
-    "TITLE": "The Plane REST API",
+    "TITLE": "The Orbit REST API",
     "DESCRIPTION": (
-        "The Plane REST API\n\n"
+        "The Orbit REST API\n\n"
         "Visit our quick start guide and full API documentation at "
         "[developers.plane.so](https://developers.plane.so/api-reference/introduction)."
     ),
     "CONTACT": {
-        "name": "Plane",
+        "name": "Orbit",
         "url": "https://plane.so",
         "email": "support@plane.so",
     },

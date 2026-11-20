@@ -51,7 +51,7 @@ export const coreSidebarMenuLinks: Record<TCoreSidebarMenuKey, TSidebarMenuItem>
   },
   image: {
     Icon: ImageOutline,
-    name: "Images in Plane",
+    name: "Images in Orbit",
     description: "Allow third-party image libraries.",
     href: `/image/`,
   },
