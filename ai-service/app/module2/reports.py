@@ -6,6 +6,7 @@ Every narrative part has a deterministic fallback.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from typing import Any
 
@@ -156,17 +157,20 @@ def build_situation_report(
         "anomalies": [a.to_dict() for a in anomalies],
         "progress_summary": progress.get("summary") if progress else None,
     }
-    summary = llm.write(
+    summary_prompt = (
         "Rédige la synthèse exécutive du rapport de situation destiné au comité de pilotage (COPIL) : "
         f"météo du projet, écart plan/réel, risques majeurs pour les éléments « {method.framework.tier_labels['critical']} » "
-        f"(priorisation {method.framework.name}, pilotage {method.delivery_method.name}). Ton direct, pour un directeur.",
-        data, max_words=120,
+        f"(priorisation {method.framework.name}, pilotage {method.delivery_method.name}). Ton direct, pour un directeur."
     )
-    recos_text = llm.write(
+    recos_prompt = (
         "Propose 3 à 5 recommandations concrètes au COPIL et les décisions attendues, une par ligne, "
-        "commençant par un verbe d'action. Appuie-toi uniquement sur les anomalies fournies.",
-        data, max_words=120,
+        "commençant par un verbe d'action. Appuie-toi uniquement sur les anomalies fournies."
     )
+    # Both texts are independent: write them in parallel to halve the wait.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        summary_job = pool.submit(llm.write, summary_prompt, data, max_words=120)
+        recos_job = pool.submit(llm.write, recos_prompt, data, max_words=120)
+        summary, recos_text = summary_job.result(), recos_job.result()
     recos = [r.strip("-•* ").strip() for r in recos_text.splitlines() if r.strip()] if recos_text else None
     fallback_summary = (
         f"Météo {WEATHER[w]}. Avancement global {metrics.overall_pct} %. "
