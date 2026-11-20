@@ -315,6 +315,29 @@ uv run uvicorn app.main:app --port 8001
 | `DATABASE_PATH` | Agent's SQLite file |
 | `ORBIT_INTERNAL_TOKEN` | Shared secret expected from the platform backend |
 
+### Testing the agent from the UI (teammates)
+
+1. **Platform side** — add to `apps/api/.env`, then recreate the API container
+   (`docker compose -f docker-compose-local.yml up -d api`):
+
+   ```
+   ORBIT_AI_SERVICE_URL=http://host.docker.internal:8001
+   ORBIT_INTERNAL_TOKEN=<same value as in ai-service/.env>
+   ORBIT_AGENT_API_KEY=<same value as PLANE_API_KEY in ai-service/.env>
+   ```
+2. **Agent side** — `ai-service/.env` with your own workspace API token, workspace slug and Gemini key
+   (free at https://aistudio.google.com/apikey), then `uv run uvicorn app.main:app --port 8001`.
+3. In the web app, open a project **of that workspace** → **AI Agent** in the project menu:
+   - **1 · Cadrage**: pick a method, paste a brief (or use the example), generate, edit the deliverables, validate →
+     work items, modules and cycles are created;
+   - **2 · Pilotage**: change a work item (unassign, move a due date), click *Analyser*, generate and approve the
+     progress report, then the steering-committee report.
+
+Demo data: `uv run python -m scripts.seed_demo` (realistic project with planted drifts) and
+`uv run python -m scripts.demo_flow` (the whole scenario in the terminal).
+
+> If `localhost:3000` shows another app, a second dev server is listening on the same port (IPv6 `::1`): stop it.
+
 ### Production
 
 `docker-compose.yml` runs the whole platform; Kubernetes and an all-in-one image are available in
@@ -338,6 +361,10 @@ All project endpoints require the `X-Orbit-Token` header.
 | `GET` | `/projects/{id}/reports` | Report history (`?type=progress\|situation`) |
 | `GET` | `/reports/{id}` | One report (JSON + Markdown) |
 | `POST` | `/reports/{id}/approve` | Human approval, with the optionally edited text |
+| `POST` | `/projects/{id}/baseline/draft` | Brief → draft baseline (charter, risks, epics, sprints, prioritized deliverables) |
+| `GET` | `/projects/{id}/baselines` | Baseline versions of a project |
+| `PUT` | `/baselines/{id}` | Edit a draft |
+| `POST` | `/baselines/{id}/validate` | Freeze the baseline and create it in the platform |
 
 Interactive documentation: http://localhost:8001/docs
 
@@ -396,8 +423,10 @@ Product and agent specifications: [`docs/PRD.md`](./docs/PRD.md), [`docs/AGENT.m
 | Progress and situation reports, approval flow | ✅ Done, tested |
 | Methods chosen by the PM (8 prioritization × 4 delivery) | ✅ Done, tested |
 | Demo data seeding | ✅ Done |
-| "AI Agent" tab in the web app + backend proxy endpoint | 🚧 Next |
-| Module 1 — brief → documents → frozen baseline → push to the platform | 🚧 In progress |
+| "AI Agent" tab in the web app (Cadrage + Pilotage) + authenticated backend proxy | ✅ Done |
+| Module 1 — brief → charter, risks, prioritized deliverables → PM edits → frozen baseline → created in the platform | ✅ Done, tested |
+| Editing the charter itself (today only deliverables are editable), change requests on a validated baseline | 🚧 Next |
+| PDF export of the situation report, automatic re-analysis on tracker webhooks | 📋 Planned |
 | Meeting minutes from transcripts, CI/CD signals | 📋 Planned |
 | Pluggable LLM (local model option for full data sovereignty) | 📋 Planned |
 
