@@ -302,6 +302,22 @@ docker compose -f compose.yml logs -f api ai-service
 ./deploy.sh <commit-sha>                            # roll back or forward to a given build
 ```
 
+**Backups.** Every night at 03:30 the server saves Orbit's data in `/var/backups/orbit/<date>/` and keeps the
+last 14: `postgres.dump` (`pg_dump`, custom format), `uploads.tar.gz` (uploaded files), `agent.db` (consistent copy
+of the agent's SQLite: baselines, library, reports), `IMAGE_TAG` (the build that was running) and `SHA256SUMS`.
+`ansible-playbook backup-fetch.yml -e fresh=true` (in the server's Ansible) takes a new one and copies it to
+`~/Backups/orbit/` on the machine running Ansible, so the data also survives the loss of the server.
+
+Restore, on the server, in `/opt/orbit` (replace `<dir>` with a backup folder):
+
+```bash
+docker compose -f compose.yml stop api worker beat-worker live ai-service
+docker compose -f compose.yml exec -T plane-db pg_restore -U plane -d plane --clean --if-exists --no-owner < <dir>/postgres.dump
+docker run --rm -v orbit_uploads:/data -v <dir>:/backup alpine:3.20 sh -c "rm -rf /data/* /data/.minio.sys && tar xzf /backup/uploads.tar.gz -C /data"
+docker cp <dir>/agent.db "$(docker compose -f compose.yml ps -aq ai-service)":/app/data/orbit.db
+./deploy.sh "$(cat <dir>/IMAGE_TAG)"
+```
+
 **Public address.** Until `orbit.microclub.info` has a DNS record, Orbit is served on
 `https://orbit.164-68-103-224.sslip.io` (sslip.io resolves that name to the server's IP, so the certificate is a
 real one). To switch, add the DNS record, change `orbit_domain` in the Ansible variables, run the `orbit` role,
