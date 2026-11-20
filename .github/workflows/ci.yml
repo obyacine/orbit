@@ -1,0 +1,46 @@
+name: CI
+
+# Every pull request, and every push outside main (main runs the same checks in the Deploy workflow).
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent:
+    name: AI agent tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: ai-service/uv.lock
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  web:
+    name: Web types and translations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Translations are complete in every language
+        run: pnpm --filter=@plane/i18n sync:check
+      - name: Type-check the web app
+        run: pnpm turbo run check:types --filter=web

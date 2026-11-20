@@ -1,0 +1,196 @@
+# Orbit in production: images built by GitHub Actions (ghcr.io), started on the server by deploy/deploy.sh.
+#
+# The host's Caddy terminates HTTPS and routes the public name to the services below, which listen on
+# 127.0.0.1 only. Settings and secrets come from .env next to this file (written by Ansible, never in git).
+
+x-api-env: &api-env
+  DEBUG: "0"
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+  ALLOWED_HOSTS: "*"
+  CORS_ALLOWED_ORIGINS: ${ORBIT_PUBLIC_URL}
+  WEB_URL: ${ORBIT_PUBLIC_URL}
+  APP_BASE_URL: ${ORBIT_PUBLIC_URL}
+  APP_BASE_PATH: ""
+  ADMIN_BASE_URL: ${ORBIT_PUBLIC_URL}
+  ADMIN_BASE_PATH: /god-mode
+  SPACE_BASE_URL: ${ORBIT_PUBLIC_URL}
+  SPACE_BASE_PATH: /spaces
+  LIVE_BASE_URL: ${ORBIT_PUBLIC_URL}
+  LIVE_BASE_PATH: /live
+  LIVE_SERVER_SECRET_KEY: ${LIVE_SERVER_SECRET_KEY:?set LIVE_SERVER_SECRET_KEY in .env}
+  DATABASE_URL: postgresql://plane:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@plane-db:5432/plane
+  REDIS_URL: redis://plane-redis:6379/
+  RABBITMQ_HOST: plane-mq
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: plane
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?set RABBITMQ_PASSWORD in .env}
+  RABBITMQ_VHOST: plane
+  USE_MINIO: "1"
+  MINIO_ENDPOINT_SSL: "1"
+  AWS_REGION: ""
+  AWS_ACCESS_KEY_ID: orbit
+  AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:?set MINIO_PASSWORD in .env}
+  AWS_S3_ENDPOINT_URL: http://plane-minio:9000
+  AWS_S3_BUCKET_NAME: uploads
+  FILE_SIZE_LIMIT: "10485760"
+  GUNICORN_WORKERS: "2"
+  API_KEY_RATE_LIMIT: 600/minute
+  # Orbit AI agent
+  ORBIT_AI_SERVICE_URL: http://ai-service:8001
+  ORBIT_INTERNAL_TOKEN: ${ORBIT_INTERNAL_TOKEN:?set ORBIT_INTERNAL_TOKEN in .env}
+  ORBIT_AGENT_API_KEY: ${ORBIT_AGENT_API_KEY:?set ORBIT_AGENT_API_KEY in .env}
+
+x-api: &api
+  image: ghcr.io/obyacine/orbit-api:${ORBIT_IMAGE_TAG:-latest}
+  environment: *api-env
+  restart: unless-stopped
+  depends_on:
+    plane-db:
+      condition: service_healthy
+    plane-redis:
+      condition: service_started
+    plane-mq:
+      condition: service_started
+
+name: orbit
+
+services:
+  # ---------------------------------------------------------------- data
+  plane-db:
+    image: postgres:15.7-alpine
+    command: postgres -c 'max_connections=200'
+    environment:
+      POSTGRES_USER: plane
+      POSTGRES_DB: plane
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plane -d plane"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  plane-redis:
+    image: valkey/valkey:7.2.11-alpine
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+  plane-mq:
+    image: rabbitmq:3.13.6-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: plane
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: plane
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    restart: unless-stopped
+
+  plane-minio:
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    command: server /export --console-address ":9090"
+    environment:
+      MINIO_ROOT_USER: orbit
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+    volumes:
+      - uploads:/export
+    ports:
+      - "127.0.0.1:${ORBIT_MINIO_PORT:-3214}:9000"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- backend
+  migrator:
+    <<: *api
+    command: ./bin/docker-entrypoint-migrator.sh
+    restart: "no"
+
+  api:
+    <<: *api
+    command: ./bin/docker-entrypoint-api.sh
+    ports:
+      - "127.0.0.1:${ORBIT_API_PORT:-3213}:8000"
+    depends_on:
+      migrator:
+        condition: service_completed_successfully
+      plane-redis:
+        condition: service_started
+      plane-mq:
+        condition: service_started
+
+  worker:
+    <<: *api
+    command: ./bin/docker-entrypoint-worker.sh
+    depends_on:
+      api:
+        condition: service_started
+
+  beat-worker:
+    <<: *api
+    command: ./bin/docker-entrypoint-beat.sh
+    depends_on:
+      api:
+        condition: service_started
+
+  live:
+    image: ghcr.io/obyacine/orbit-live:${ORBIT_IMAGE_TAG:-latest}
+    environment:
+      PORT: "3000"
+      API_BASE_URL: http://api:8000
+      WEB_BASE_URL: ${ORBIT_PUBLIC_URL}
+      LIVE_BASE_URL: ${ORBIT_PUBLIC_URL}
+      LIVE_BASE_PATH: /live
+      LIVE_SERVER_SECRET_KEY: ${LIVE_SERVER_SECRET_KEY}
+      REDIS_URL: redis://plane-redis:6379/
+      REDIS_HOST: plane-redis
+      REDIS_PORT: "6379"
+    ports:
+      - "127.0.0.1:${ORBIT_LIVE_PORT:-3212}:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- frontends (static, served by Caddy)
+  web:
+    image: ghcr.io/obyacine/orbit-web:${ORBIT_IMAGE_TAG:-latest}
+    ports:
+      - "127.0.0.1:${ORBIT_WEB_PORT:-3210}:3000"
+    restart: unless-stopped
+
+  admin:
+    image: ghcr.io/obyacine/orbit-admin:${ORBIT_IMAGE_TAG:-latest}
+    ports:
+      - "127.0.0.1:${ORBIT_ADMIN_PORT:-3211}:3000"
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------- AI agent
+  ai-service:
+    image: ghcr.io/obyacine/orbit-ai-service:${ORBIT_IMAGE_TAG:-latest}
+    environment:
+      PLANE_BASE_URL: http://api:8000
+      PLANE_API_KEY: ${ORBIT_AGENT_API_KEY}
+      PLANE_WORKSPACE_SLUG: ${ORBIT_WORKSPACE_SLUG:?set ORBIT_WORKSPACE_SLUG in .env}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash}
+      DATABASE_PATH: /app/data/orbit.db
+      ORBIT_INTERNAL_TOKEN: ${ORBIT_INTERNAL_TOKEN}
+    volumes:
+      - agentdata:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  rabbitmq_data:
+  uploads:
+  agentdata:
