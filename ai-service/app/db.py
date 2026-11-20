@@ -1,4 +1,4 @@
-"""SQLite storage for Orbit's own data: reports now, baselines and anomalies later.
+"""SQLite storage for Orbit's own data: reports and project methods now, baselines and anomalies later.
 
 Kept outside Plane's schema on purpose (no Django migrations). Reports are never overwritten:
 approval only changes their status.
@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS reports (
     approved_by TEXT
 );
 CREATE INDEX IF NOT EXISTS reports_project ON reports(project_id, type, created_at);
+CREATE TABLE IF NOT EXISTS project_methods (
+    project_id TEXT PRIMARY KEY,
+    config TEXT NOT NULL,            -- JSON of app.methods.ProjectMethod
+    updated_at TEXT NOT NULL,
+    updated_by TEXT
+);
 """
 
 
@@ -94,3 +100,25 @@ def approve_report(report_id: str, approved_by: str, markdown: str | None = None
             (_now(), approved_by, report_id),
         )
     return get_report(report_id)
+
+
+def get_method(project_id: str) -> dict | None:
+    """The PM's method for a project (None: not configured yet, defaults apply)."""
+    with _connect() as c:
+        r = c.execute("SELECT * FROM project_methods WHERE project_id = ?", (project_id,)).fetchone()
+    if r is None:
+        return None
+    d = dict(r)
+    d["config"] = json.loads(d["config"])
+    return d
+
+
+def save_method(project_id: str, config: dict, updated_by: str | None = None) -> dict:
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO project_methods (project_id, config, updated_at, updated_by) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(project_id) DO UPDATE SET config = excluded.config, updated_at = excluded.updated_at, "
+            "updated_by = excluded.updated_by",
+            (project_id, json.dumps(config, ensure_ascii=False), _now(), updated_by),
+        )
+    return get_method(project_id)

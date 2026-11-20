@@ -12,8 +12,6 @@ from typing import Any
 
 from app.plane_client import PlaneClient
 
-MOSCOW_LABELS = ("Must", "Should", "Could", "Won't")
-
 
 @dataclass
 class Issue:
@@ -22,7 +20,6 @@ class Issue:
     title: str
     status: str  # todo | in_progress | done | cancelled | backlog
     state_name: str
-    moscow: str | None
     labels: list[str]
     priority: str
     assignees: list[str]
@@ -32,12 +29,17 @@ class Issue:
     target_date: date | None = None
     completed_at: datetime | None = None
     blocked_by: list[str] = field(default_factory=list)
+    # Set by app.methods.classify() according to the PM's prioritization method
+    category: str | None = None  # PM's vocabulary: "Must-Have", "Basique", "WSJF 13"...
+    tier: str | None = None  # critical | important | optional | excluded
 
 
 @dataclass
 class Module:
     id: str
     name: str
+    start_date: date | None = None  # dated modules are phases in Waterfall / hybrid
+    end_date: date | None = None
 
 
 @dataclass
@@ -100,7 +102,15 @@ def build_snapshot(client: PlaneClient, project_id: str, with_relations: bool = 
     states = {s["id"]: s for s in client.list_states(project_id)}
     labels = {lab["id"]: lab["name"] for lab in client.list_labels(project_id)}
 
-    modules = [Module(id=m["id"], name=m["name"]) for m in client.list_modules(project_id)]
+    modules = [
+        Module(
+            id=m["id"],
+            name=m["name"],
+            start_date=_parse_date(m.get("start_date")),
+            end_date=_parse_date(m.get("target_date")),
+        )
+        for m in client.list_modules(project_id)
+    ]
     cycles = [
         Cycle(
             id=c["id"],
@@ -125,7 +135,6 @@ def build_snapshot(client: PlaneClient, project_id: str, with_relations: bool = 
     for raw in client.list_issues(project_id):
         state = states.get(raw.get("state"), {})
         label_names = [labels[lid] for lid in raw.get("labels", []) if lid in labels]
-        moscow = next((n for n in label_names if n in MOSCOW_LABELS), None)
         issues.append(
             Issue(
                 id=raw["id"],
@@ -133,7 +142,6 @@ def build_snapshot(client: PlaneClient, project_id: str, with_relations: bool = 
                 title=raw["name"],
                 status=_GROUP_TO_STATUS.get(state.get("group", ""), "backlog"),
                 state_name=state.get("name", "?"),
-                moscow=moscow,
                 labels=label_names,
                 priority=raw.get("priority") or "none",
                 assignees=list(raw.get("assignees", [])),

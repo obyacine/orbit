@@ -64,19 +64,20 @@ Priorités : **P0** = indispensable à la démo · **P1** = important · **P2** 
 |---|---|---|
 | M1-1 | Saisie d'un brief en texte libre | P0 |
 | M1-2 | Extraction des entités (objectifs, budget, dates, parties prenantes, contraintes) | P0 |
-| M1-3 | Génération de la charte et du tableau MoSCoW (éléments identifiés `M1`, `S2`…) | P0 |
+| M1-0 | Choix par le PM de la méthode de priorisation (MoSCoW, Kano, RICE, WSJF, ICE, valeur / effort, priorité native, personnalisée) et de pilotage (Scrum, Kanban, Waterfall, hybride) | P0 |
+| M1-3 | Génération de la charte et du tableau de priorisation dans la méthode choisie (éléments identifiés `M1`, `S2`…) | P0 |
 | M1-4 | Génération du registre des risques | P1 |
 | M1-5 | Génération du cas d'affaire, de la cartographie des parties prenantes et du plan de communication | P2 |
 | M1-6 | Édition section par section par le CDP | P0 |
 | M1-7 | Validation → baseline figée et versionnée | P0 |
-| M1-8 | Création automatique dans le tracker : labels MoSCoW, epics, sprints / jalons, issues | P0 |
+| M1-8 | Création automatique dans le tracker : labels de priorité, epics, sprints / jalons, issues | P0 |
 
 ### Module 2 — L'application du contrat
 
 | ID | Fonctionnalité | Priorité |
 |---|---|---|
 | M2-1 | Snapshot normalisé du projet depuis le tracker | P0 |
-| M2-2 | Calculs : % par epic, vélocité, bloqués, jalons à risque, couverture MoSCoW | P0 |
+| M2-2 | Calculs : % par epic, vélocité, bloqués, jalons / phases à risque, WIP (Kanban), couverture par priorité selon la méthode | P0 |
 | M2-3 | Règles d'anomalies déterministes (🔴 / 🟡 / 🔵) avec référence à la baseline | P0 |
 | M2-4 | Rapport d'avancement (Team Lead → PM) + validation | P0 |
 | M2-5 | Rapport de situation (PM → COPIL) : météo, plan vs réel, risques, anomalies, recommandations | P0 |
@@ -117,7 +118,7 @@ P2 : 🔴 build cassé sur `main` · 🔴 test échoué lié à un `Must` · �
 ## 7. Parcours utilisateur
 
 **Lancement**
-1. Le CDP colle son brief → Orbit génère charte, MoSCoW et risques.
+1. Le CDP choisit sa méthode et colle son brief → Orbit génère charte, priorisation et risques.
 2. Le CDP corrige → valide → la baseline est figée.
 3. Orbit crée les labels, epics, sprints et issues dans le tracker.
 
@@ -172,7 +173,7 @@ Détail technique de l'agent : [`AGENT.md`](./AGENT.md).
 
 ## 10. Scénario de démo (3 à 4 min)
 
-1. Le CDP colle un brief de 5 lignes → charte, MoSCoW et risques générés.
+1. Le CDP colle un brief de 5 lignes → charte, priorisation (dans la méthode choisie) et risques générés.
 2. Il valide → baseline figée, issues créées dans le tracker.
 3. On passe au **jour 21** (projet de démo pré-rempli).
 4. « Générer le rapport d'avancement » → % par epic, vélocité, bloqués.

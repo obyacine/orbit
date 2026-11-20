@@ -59,7 +59,7 @@ Brief brut (5 à 20 lignes)
 | Cas d'affaire | Problème, bénéfices attendus, coûts, ROI estimé |
 | Charte projet | Périmètre, objectifs, budget, jalons, contraintes, gouvernance |
 | Cartographie des parties prenantes | Liste + matrice influence / intérêt |
-| Tableau MoSCoW | Must / Should / Could / Won't, chaque élément identifié (`M1`, `S3`…) |
+| Tableau de priorisation | Selon la méthode choisie par le PM (MoSCoW, Kano, RICE, WSJF…), chaque élément identifié (`M1`, `S3`…) |
 | Registre des risques | Risque, probabilité, impact, sévérité, mitigation, responsable |
 | Plan de communication | Qui reçoit quoi, à quelle fréquence, par quel canal |
 
@@ -67,13 +67,28 @@ Brief brut (5 à 20 lignes)
 
 | Élément de la baseline | Objet Plane |
 |---|---|
-| Catégories MoSCoW | Labels `Must`, `Should`, `Could`, `Won't` |
+| Catégories de priorité | Labels de la méthode (`Must`, `Basique`, `WSJF:13`…) ou champ priorité natif |
 | Lots fonctionnels | Modules (epics) |
 | Jalons de la charte | Cycles (avec dates) |
-| Éléments MoSCoW | Issues labellisées et rattachées à leur module |
+| Éléments priorisés | Issues labellisées et rattachées à leur module |
 | Documents | Pages Plane (lecture seule) |
 
-Le **label MoSCoW sur chaque issue** est le lien entre le contrat et l'exécution.
+La **priorité de chaque issue** (label ou champ natif) est le lien entre le contrat et l'exécution.
+
+### Méthode du projet, choisie par le PM
+
+Le PM fait deux choix, par projet (`PUT /projects/{id}/method`, catalogue sur `GET /methods`) :
+
+| Choix | Options |
+|---|---|
+| Priorisation | MoSCoW · Kano · Priorité native (Urgent / Haute / Moyenne / Basse) · RICE · WSJF (SAFe) · ICE · Matrice valeur / effort · Personnalisée (ses propres labels) |
+| Pilotage | Scrum (sprints, vélocité) · Kanban (débit, limite WIP) · Cycle en V / Waterfall (phases = modules datés) · Hybride |
+
+Chaque méthode de priorisation est traduite en **quatre niveaux communs** : critique, important, optionnel, exclu.
+Pour les méthodes à score (RICE, WSJF, ICE), les niveaux sont relatifs (top 20 % critique, 30 % suivants important)
+ou fixés par des seuils absolus. Les règles raisonnent sur ces niveaux et fonctionnent donc avec toutes les méthodes,
+tandis que les messages gardent le vocabulaire du PM (« Basique « RH-2 » en retard de 4 j », réf. « Kano / Basique »).
+Code : `ai-service/app/methods.py`.
 
 ---
 
@@ -104,35 +119,41 @@ GET /api/v1/.../work-items/{issue}/relations/   /comments/   /activities/
 | % par epic | Issues au groupe `completed` / total du module |
 | Vélocité | Issues passées en `completed` sur la période vs période précédente (via `activities`) |
 | Bloqués | Relation `blocked_by` ou label `Bloqué` + dernier commentaire comme raison |
-| Jalon à risque | Fin du cycle < 7 jours **et** % réalisé < % de temps écoulé |
-| Couverture MoSCoW | Nombre de Must / Should terminés, en cours, en retard |
+| Jalon à risque | Sprint, phase ou jalon commencé **et** % réalisé < % de temps écoulé |
+| Phase / sprint dépassé | Date de fin passée et % réalisé < 100 % |
+| Travail en cours (Kanban, hybride) | Issues `started` vs limite WIP définie par le PM |
+| Couverture par priorité | Par niveau (dans le vocabulaire de la méthode) : terminés, en cours, en retard |
 | Score de dérive | % de conformité à la baseline, pondéré par la sévérité des anomalies ouvertes |
 
 ### 4.3 Règles d'anomalies
 
 | Sévérité | Règle | Source |
 |---|---|---|
-| 🔴 Critique | Issue `Must` non assignée à moins de 7 jours de son jalon | Tracker |
-| 🔴 Critique | Issue `Must` en retard sur son jalon | Tracker |
+| 🔴 Critique | Élément critique non assigné à moins de 7 jours de son échéance | Tracker |
+| 🔴 Critique | Élément critique en retard ou bloqué | Tracker |
+| 🔴 Critique | Phase dépassée non terminée (passage de jalon manqué) — Waterfall / hybride | Tracker |
 | 🔴 Critique | Build cassé sur `main` | CI/CD |
-| 🔴 Critique | Test échoué lié à une issue `Must` | CI/CD |
-| 🔴 Critique | Suppression ou report d'un `Must` discuté sans entrée Intake (demande de changement) | Réunion |
+| 🔴 Critique | Test échoué lié à un élément critique | CI/CD |
+| 🔴 Critique | Suppression ou report d'un élément critique discuté sans entrée Intake (demande de changement) | Réunion |
 | 🔴 Critique | Décision contredisant la charte validée | Réunion |
-| 🟡 Avertissement | Issue `Should` en retard | Tracker |
-| 🟡 Avertissement | Vélocité en baisse de plus de 20 % | Tracker |
+| 🟡 Avertissement | Élément important en retard | Tracker |
+| 🟡 Avertissement | Vélocité (Scrum) ou débit (Kanban) en baisse de plus de 20 % | Tracker |
+| 🟡 Avertissement | Limite WIP dépassée — Kanban / hybride | Tracker |
+| 🟡 Avertissement | Sprint dépassé non terminé — Scrum / hybride | Tracker |
 | 🟡 Avertissement | Jalon proche avec dépendances incomplètes | Tracker |
 | 🟡 Avertissement | Couverture de tests sous le seuil | CI/CD |
-| 🔵 Info | `Could` déprioritisé | Tracker |
+| 🔵 Info | Élément optionnel reporté | Tracker |
+| 🔵 Info | Éléments actifs sans priorité dans la méthode choisie | Tracker |
 | 🔵 Info | Nouveau risque de faible probabilité mentionné | Réunion |
 
-Chaque anomalie référence **l'élément de la baseline qu'elle viole** (ex. « MoSCoW → M2 »).
+Chaque anomalie référence **l'élément de la baseline qu'elle viole** (ex. « MoSCoW → M2 », « Kano / Basique », « Phase / Spécifications »).
 
 ### 4.4 Rapport d'avancement — Team Lead → PM
 
 | Section | Origine |
 |---|---|
 | % de complétion par epic | Calcul |
-| Vélocité (cette semaine vs précédente) | Calcul |
+| Vélocité ou débit (cette semaine vs précédente), WIP si Kanban | Calcul |
 | Éléments bloqués et leur raison | Calcul + commentaires |
 | Jalons à venir à risque | Calcul |
 | Synthèse rédigée | LLM, à partir du JSON calculé |
@@ -145,7 +166,7 @@ Flux : génération → le Team Lead relit et valide → enregistré en Page Pla
 |---|---|
 | Météo du projet 🟢🟡🔴 | Règles fixes |
 | Plan vs réel (jalons baseline vs cycles) | Calcul |
-| Couverture MoSCoW | Calcul |
+| Couverture par priorité | Calcul |
 | Risques actifs (sévérité mise à jour) | Baseline + anomalies |
 | Anomalies de la période | Registre |
 | Synthèse exécutive | LLM — validée par le PM |
