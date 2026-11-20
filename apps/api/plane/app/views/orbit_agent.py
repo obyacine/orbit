@@ -161,3 +161,59 @@ class OrbitAgentBaselineValidateEndpoint(BaseAPIView):
         _ensure_agent_member(slug, project_id)
         payload = {"validated_by": request.user.display_name, "content": request.data.get("content")}
         return _forward("POST", f"/baselines/{baseline_id}/validate", payload)
+
+
+_MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _forward_upload(request, path, params=None):
+    """Relay one uploaded file to the agent (multipart)."""
+    upload = request.FILES.get("file")
+    if not upload:
+        return Response({"error": "Aucun fichier reçu"}, status=status.HTTP_400_BAD_REQUEST)
+    if upload.size > _MAX_UPLOAD_BYTES:
+        return Response({"error": "Le fichier dépasse 10 Mo."}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        resp = requests.post(
+            f"{settings.ORBIT_AI_SERVICE_URL.rstrip('/')}{path}",
+            params=params,
+            files={"file": (upload.name, upload.read(), upload.content_type or "application/octet-stream")},
+            headers={"X-Orbit-Token": settings.ORBIT_INTERNAL_TOKEN},
+            timeout=60,
+        )
+    except requests.RequestException:
+        return Response(
+            {"error": "L'agent IA est injoignable. Vérifiez que le service ai-service est démarré."},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+    if resp.status_code >= 400:
+        return Response({"error": data.get("detail") or "Traitement du document impossible"}, status=resp.status_code)
+    return Response(data, status=status.HTTP_200_OK)
+
+
+class OrbitAgentDocumentExtractEndpoint(BaseAPIView):
+    """The PM uploads a document (PDF, Word, text); its text comes back to fill the brief. Nothing is stored."""
+
+    @allow_permission([ROLE.ADMIN])
+    def post(self, request, slug, project_id):
+        return _forward_upload(request, "/documents/extract")
+
+
+class OrbitAgentLibraryEndpoint(BaseAPIView):
+    """Organization library: reference documents and past validated projects reused by the next cadrage."""
+
+    @allow_permission(_READ)
+    def get(self, request, slug, project_id):
+        return _forward("GET", "/library")
+
+    @allow_permission([ROLE.ADMIN])
+    def post(self, request, slug, project_id):
+        role = request.data.get("role", "template")
+        return _forward_upload(request, "/library", params={"role": role, "created_by": request.user.display_name})
+
+
+class OrbitAgentLibraryDocumentEndpoint(BaseAPIView):
+    @allow_permission([ROLE.ADMIN])
+    def delete(self, request, slug, project_id, reference_id):
+        return _forward("DELETE", f"/library/{reference_id}")

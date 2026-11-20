@@ -1,12 +1,14 @@
 import re
+from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from app import db, llm
 from app.config import get_settings
 from app.methods import ProjectMethod, catalog, classify
 from app.module1 import baseline as m1
+from app.module1 import documents
 from app.module2.metrics import compute_metrics
 from app.module2.reports import build_progress_report, build_situation_report, to_markdown
 from app.module2.rules import detect_anomalies
@@ -181,11 +183,17 @@ def draft_baseline(project_id: str, body: DraftBody, x_orbit_token: str | None =
     """The LLM turns the PM's brief into a draft baseline, in the project's method. Nothing is created yet."""
     _check_internal_token(x_orbit_token)
     method = _method(project_id)
+    references = db.list_references(with_text=True)
+    past = db.past_validated_baselines(exclude_project_id=project_id)
     try:
-        proposal = m1.generate(body.brief, method)
+        proposal = m1.generate(body.brief, method, references=references, past=past)
     except m1.BaselineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return db.save_baseline_draft(project_id, body.brief, method.to_dict(), proposal.model_dump(), body.created_by)
+    sources = {
+        "documents": [r["filename"] for r in references],
+        "past_projects": [b["content"]["charter"]["title"] for b in past],
+    }
+    return db.save_baseline_draft(project_id, body.brief, method.to_dict(), proposal.model_dump(), body.created_by, sources)
 
 
 @app.get("/projects/{project_id}/baselines")
@@ -245,3 +253,62 @@ def validate_and_push_baseline(baseline_id: str, body: ValidateBody, x_orbit_tok
     db.save_method(found["project_id"], method.to_dict(), body.validated_by)
     result = db.validate_baseline(baseline_id, body.validated_by, baseline.model_dump(), pushed["work_items"])
     return {**result, "counts": pushed["counts"]}
+
+
+@app.post("/documents/extract")
+async def extract_document(file: Annotated[UploadFile, File()], x_orbit_token: str | None = Header(default=None)) -> dict:
+    """Text of a PDF / Word / text document the PM brings, to fill the brief. Nothing is stored."""
+    _check_internal_token(x_orbit_token)
+    data = await file.read(documents.MAX_BYTES + 1)
+    try:
+        return documents.extract(file.filename or "document", data).to_dict()
+    except documents.DocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+
+# ------------------------------------------------------------------ organization library
+
+
+@app.get("/library")
+def list_library(x_orbit_token: str | None = Header(default=None)) -> dict:
+    """Reference documents the agent learns the organization's habits from, and past validated projects."""
+    _check_internal_token(x_orbit_token)
+    past = db.past_validated_baselines(limit=10)
+    return {
+        "documents": db.list_references(),
+        "past_projects": [
+            {"project_id": b["project_id"], "title": b["content"]["charter"]["title"], "version": b["version"],
+             "validated_at": b["validated_at"], "deliverables": len(b["content"]["deliverables"])}
+            for b in past
+        ],
+    }
+
+
+_ROLES = {"template", "past_project", "standard"}
+
+
+@app.post("/library")
+async def add_to_library(
+    file: Annotated[UploadFile, File()],
+    role: str = "template",
+    created_by: str | None = None,
+    x_orbit_token: str | None = Header(default=None),
+) -> dict:
+    _check_internal_token(x_orbit_token)
+    if role not in _ROLES:
+        raise HTTPException(status_code=422, detail=f"Rôle inconnu : {role}")
+    data = await file.read(documents.MAX_BYTES + 1)
+    try:
+        doc = documents.extract(file.filename or "document", data)
+    except documents.DocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return db.add_reference(doc.filename, doc.kind, role, doc.text, created_by)
+
+
+@app.delete("/library/{reference_id}")
+def remove_from_library(reference_id: str, x_orbit_token: str | None = Header(default=None)) -> dict:
+    _check_internal_token(x_orbit_token)
+    if not db.delete_reference(reference_id):
+        raise HTTPException(status_code=404, detail="Document introuvable")
+    return {"deleted": reference_id}

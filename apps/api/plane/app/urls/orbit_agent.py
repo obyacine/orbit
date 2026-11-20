@@ -12,6 +12,9 @@ from plane.app.views.orbit_agent import (
     OrbitAgentBaselineValidateEndpoint,
     OrbitAgentApproveReportEndpoint,
     OrbitAgentCatalogEndpoint,
+    OrbitAgentDocumentExtractEndpoint,
+    OrbitAgentLibraryDocumentEndpoint,
+    OrbitAgentLibraryEndpoint,
     OrbitAgentGenerateReportEndpoint,
     OrbitAgentMethodEndpoint,
     OrbitAgentReportsEndpoint,
@@ -20,6 +23,9 @@ from plane.app.views.orbit_agent import (
 _BASE = "workspaces/<str:slug>/projects/<uuid:project_id>/agent"
 
 urlpatterns = [
+    path(f"{_BASE}/library/", OrbitAgentLibraryEndpoint.as_view(), name="orbit-agent-library"),
+    path(f"{_BASE}/library/<uuid:reference_id>/", OrbitAgentLibraryDocumentEndpoint.as_view(), name="orbit-agent-library-doc"),
+    path(f"{_BASE}/documents/extract/", OrbitAgentDocumentExtractEndpoint.as_view(), name="orbit-agent-document-extract"),
     path(f"{_BASE}/baselines/", OrbitAgentBaselinesEndpoint.as_view(), name="orbit-agent-baselines"),
     path(f"{_BASE}/baselines/draft/", OrbitAgentBaselineDraftEndpoint.as_view(), name="orbit-agent-baseline-draft"),
     path(f"{_BASE}/baselines/<uuid:baseline_id>/", OrbitAgentBaselineDetailEndpoint.as_view(), name="orbit-agent-baseline"),

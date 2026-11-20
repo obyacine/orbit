@@ -4,7 +4,7 @@
  * See the LICENSE file for details.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { observer } from "mobx-react";
 import Link from "next/link";
 import { Button } from "@makeplane/propel/components/button";
@@ -16,8 +16,10 @@ import type {
   TBaseline,
   TBaselineContent,
   TBaselineDeliverable,
+  TExtractedDocument,
 } from "@/services/orbit-agent.service";
 import { OrbitAgentService } from "@/services/orbit-agent.service";
+import { OrbitAgentLibrary } from "./library";
 
 const agentService = new OrbitAgentService();
 
@@ -180,6 +182,32 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
   const [brief, setBrief] = useState("");
   const [busy, setBusy] = useState<"draft" | "validate" | null>(null);
   const [writingBrief, setWritingBrief] = useState(false);
+  const [imported, setImported] = useState<TExtractedDocument[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // The document's text lands in the brief, where the PM can read and edit what the AI will receive.
+  const importFiles = async (files: FileList | File[]) => {
+    setImporting(true);
+    for (const file of Array.from(files)) {
+      try {
+        const doc = await agentService.extractDocument(workspaceSlug, projectId, file);
+        setBrief((b) => (b.trim() ? `${b.trim()}\n\n--- ${doc.filename} ---\n${doc.text}` : doc.text));
+        setImported((list) => [...list, doc]);
+        if (doc.truncated)
+          setToast({
+            type: "warning",
+            title: "Document tronqué",
+            message: `${doc.filename} est très long : seuls les ${doc.characters.toLocaleString("fr-FR")} premiers caractères sont repris.`,
+          });
+      } catch (error) {
+        setToast({ type: "error", title: `Import impossible : ${file.name}`, message: errorMessage(error) });
+      }
+    }
+    setImporting(false);
+    if (fileInput.current) fileInput.current.value = "";
+  };
 
   const load = useCallback(async () => {
     try {
@@ -277,50 +305,119 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
   // ---------------------------------------------------------------- brief input
   if (!current || writingBrief) {
     return (
-      <div className="flex flex-col gap-4 rounded-lg border border-subtle bg-surface-1 p-5">
-        <div>
-          <h2 className="text-h5-semibold text-primary">Cadrage du projet</h2>
-          <p className="mt-1 text-body-xs-regular text-secondary">
-            Collez votre brief. L'IA prépare la charte, le registre des risques, le découpage et les livrables priorisés
-            selon votre méthode ({method?.labels.prioritization ?? "…"} · {method?.labels.delivery ?? "…"}, modifiable
-            en haut de la page). Vous relisez, vous corrigez, vous validez : Orbit crée alors le projet.
-          </p>
-        </div>
-        <textarea
-          className="min-h-48 w-full rounded-md border border-subtle bg-layer-1 p-3 text-body-xs-regular text-primary"
-          placeholder="Besoin, objectifs, périmètre, échéance, budget, parties prenantes, contraintes…"
-          value={brief}
-          disabled={!isAdmin}
-          onChange={(e) => setBrief(e.target.value)}
-        />
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <button
-            type="button"
-            className="text-body-xs-regular text-accent-primary hover:underline"
-            onClick={() => setBrief(EXAMPLE_BRIEF)}
-          >
-            Utiliser un exemple de brief
-          </button>
-          <div className="flex gap-2">
-            {current && (
-              <Button stretch="auto" variant="ghost" size="md" label="Annuler" onClick={() => setWritingBrief(false)} />
-            )}
-            <Button
-              stretch="auto"
-              variant="primary"
-              size="md"
-              label="Générer le cadrage"
-              loading={busy === "draft"}
-              disabled={!isAdmin || brief.trim().length < 30}
-              onClick={() => void generate()}
-            />
+      <div className="flex flex-col gap-4">
+        <OrbitAgentLibrary workspaceSlug={workspaceSlug} projectId={projectId} isAdmin={isAdmin} />
+        <div className="flex flex-col gap-4 rounded-lg border border-subtle bg-surface-1 p-5">
+          <div>
+            <h2 className="text-h5-semibold text-primary">Cadrage du projet</h2>
+            <p className="mt-1 text-body-xs-regular text-secondary">
+              Collez votre brief ou importez vos documents (cahier des charges, note de cadrage…). L'IA prépare la
+              charte, le registre des risques, le découpage et les livrables priorisés selon votre méthode (
+              {method?.labels.prioritization ?? "…"} · {method?.labels.delivery ?? "…"}, modifiable en haut de la page).
+              Vous relisez, vous corrigez, vous validez : Orbit crée alors le projet.
+            </p>
           </div>
-        </div>
-        {!isAdmin && (
-          <p className="text-caption-sm-regular text-tertiary">
-            Seul un administrateur du projet peut cadrer le projet.
+          <div
+            className={`flex flex-col gap-2 rounded-md border border-dashed p-3 ${
+              dragOver ? "border-accent-primary bg-accent-subtle" : "border-subtle"
+            }`}
+            onDragOver={(e) => {
+              if (!isAdmin) return;
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              if (isAdmin && e.dataTransfer.files.length) void importFiles(e.dataTransfer.files);
+            }}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-body-xs-regular text-secondary">
+                Déposez un document ici ou importez-le : PDF, Word (.docx), .txt, .md · 10 Mo max
+              </span>
+              <input
+                ref={fileInput}
+                id="orbit-brief-documents"
+                type="file"
+                multiple
+                accept=".pdf,.docx,.txt,.md,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+                className="hidden"
+                onChange={(e) => e.target.files?.length && void importFiles(e.target.files)}
+              />
+              <Button
+                stretch="auto"
+                variant="secondary"
+                size="sm"
+                label="Importer un document"
+                loading={importing}
+                disabled={!isAdmin}
+                onClick={() => fileInput.current?.click()}
+              />
+            </div>
+            {imported.length > 0 && (
+              <ul className="flex flex-wrap gap-2">
+                {imported.map((d, i) => (
+                  <li
+                    key={`${d.filename}-${i}`}
+                    className="rounded bg-layer-2 px-2 py-0.5 text-caption-sm-regular text-secondary"
+                  >
+                    📄 {d.filename} · {d.kind}
+                    {d.pages ? ` · ${d.pages} p.` : ""} · {d.characters.toLocaleString("fr-FR")} caractères
+                    {d.truncated ? " (tronqué)" : ""}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <textarea
+            id="orbit-brief"
+            className="min-h-48 w-full rounded-md border border-subtle bg-layer-1 p-3 text-body-xs-regular text-primary"
+            placeholder="Besoin, objectifs, périmètre, échéance, budget, parties prenantes, contraintes…"
+            value={brief}
+            disabled={!isAdmin}
+            onChange={(e) => setBrief(e.target.value)}
+          />
+          <p className="-mt-2 text-caption-sm-regular text-tertiary">
+            Ce texte est exactement ce que l'IA recevra : relisez-le et retirez ce qui n'est pas utile (annexes, données
+            personnelles).
           </p>
-        )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <button
+              type="button"
+              className="text-body-xs-regular text-accent-primary hover:underline"
+              onClick={() => setBrief(EXAMPLE_BRIEF)}
+            >
+              Utiliser un exemple de brief
+            </button>
+            <div className="flex gap-2">
+              {current && (
+                <Button
+                  stretch="auto"
+                  variant="ghost"
+                  size="md"
+                  label="Annuler"
+                  onClick={() => setWritingBrief(false)}
+                />
+              )}
+              <Button
+                stretch="auto"
+                variant="primary"
+                size="md"
+                label="Générer le cadrage"
+                loading={busy === "draft"}
+                disabled={!isAdmin || brief.trim().length < 30}
+                onClick={() => void generate()}
+              />
+            </div>
+          </div>
+          {!isAdmin && (
+            <p className="text-caption-sm-regular text-tertiary">
+              Seul un administrateur du projet peut cadrer le projet.
+            </p>
+          )}
+        </div>
       </div>
     );
   }
@@ -343,6 +440,15 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
             Méthode : {catalog?.delivery.find((d) => d.id === current.method.delivery)?.name ?? current.method.delivery}{" "}
             · {framework?.name ?? current.method.prioritization}
           </span>
+          {current.sources && (current.sources.documents.length > 0 || current.sources.past_projects.length > 0) && (
+            <span className="text-caption-sm-regular text-tertiary">
+              Inspiré de :{" "}
+              {[
+                ...current.sources.documents.map((d) => `📄 ${d}`),
+                ...current.sources.past_projects.map((p) => `✔ ${p}`),
+              ].join(" · ")}
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {!validated && isAdmin && (

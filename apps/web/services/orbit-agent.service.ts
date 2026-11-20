@@ -145,6 +145,31 @@ export type TBaseline = {
   validated_at: string | null;
   validated_by: string | null;
   counts?: { work_items: number; modules: number; cycles: number };
+  sources?: { documents: string[]; past_projects: string[] } | null;
+};
+
+export type TLibraryRole = "template" | "past_project" | "standard";
+
+export type TLibrary = {
+  documents: {
+    id: string;
+    filename: string;
+    kind: string;
+    role: TLibraryRole;
+    characters: number;
+    created_at: string;
+    created_by: string | null;
+  }[];
+  past_projects: { project_id: string; title: string; version: number; validated_at: string; deliverables: number }[];
+};
+
+export type TExtractedDocument = {
+  filename: string;
+  kind: string;
+  pages: number | null;
+  characters: number;
+  truncated: boolean;
+  text: string;
 };
 
 // ------------------------------------------------------------------ service
@@ -204,6 +229,43 @@ export class OrbitAgentService extends APIService {
 
   async generateReport(workspaceSlug: string, projectId: string, type: TAgentReportType): Promise<TAgentReport> {
     return this.post(`${this.base(workspaceSlug, projectId)}/reports/${type}/`)
+      .then((res) => res?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async extractDocument(workspaceSlug: string, projectId: string, file: File): Promise<TExtractedDocument> {
+    const form = new FormData();
+    form.append("file", file);
+    return this.post(`${this.base(workspaceSlug, projectId)}/documents/extract/`, form)
+      .then((res) => res?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async getLibrary(workspaceSlug: string, projectId: string): Promise<TLibrary> {
+    return this.get(`${this.base(workspaceSlug, projectId)}/library/`)
+      .then((res) => res?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async addToLibrary(workspaceSlug: string, projectId: string, file: File, role: TLibraryRole): Promise<unknown> {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("role", role);
+    return this.post(`${this.base(workspaceSlug, projectId)}/library/`, form)
+      .then((res) => res?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async removeFromLibrary(workspaceSlug: string, projectId: string, referenceId: string): Promise<unknown> {
+    return this.delete(`${this.base(workspaceSlug, projectId)}/library/${referenceId}/`)
       .then((res) => res?.data)
       .catch((error) => {
         throw error?.response?.data;

@@ -129,7 +129,53 @@ def _delivery_rules(method: ProjectMethod, today: date) -> str:
             "2 semaines consécutifs. Chaque livrable a une phase, un sprint et une `due_date` = fin du sprint.")
 
 
-def build_prompt(brief: str, method: ProjectMethod, today: date) -> str:
+_ROLE_LABEL = {"template": "modèle de l'organisation", "past_project": "document d'un projet passé", "standard": "standard interne"}
+MAX_REFERENCE_CHARS = 12_000  # per document
+MAX_REFERENCES_CHARS = 36_000  # all documents together
+
+
+def summarize_baseline(b: dict) -> str:
+    """Compact view of a validated baseline of another project, used as an example."""
+    c = b["content"]
+    ch = c["charter"]
+    lines = [
+        (f"Projet « {ch['title']} » ({ch.get('start_date') or '?'} → {ch.get('end_date') or '?'}), "
+         f"méthode {b['method'].get('delivery')} + {b['method'].get('prioritization')}."),
+        "Epics : " + " ; ".join(e["name"] for e in c["epics"]),
+        "Livrables : " + " ; ".join(f"[{d['priority']}] {d['title']}" for d in c["deliverables"][:25]),
+        "Risques : " + " ; ".join(r["description"] for r in ch.get("risks", [])[:8]),
+    ]
+    return "\n".join(lines)
+
+
+def reference_section(references: list[dict], past: list[dict]) -> str:
+    """What the organization already wrote: the agent reuses its structure and habits, never its facts."""
+    if not references and not past:
+        return ""
+    parts = [
+        ("Bibliothèque de l'organisation. Inspire-toi de ces documents pour la structure et les rubriques de la "
+         "charte, le vocabulaire, le niveau de détail, les livrables et risques habituels, et des durées réalistes. "
+         "N'en recopie JAMAIS les faits (budget, dates, noms, chiffres) : les faits viennent uniquement du brief."),
+    ]
+    budget = MAX_REFERENCES_CHARS
+    for i, r in enumerate(references, 1):
+        if budget <= 0:
+            break
+        text = r["text"][: min(MAX_REFERENCE_CHARS, budget)]
+        budget -= len(text)
+        parts.append(f'=== Référence {i} : {r["filename"]} ({_ROLE_LABEL.get(r["role"], r["role"])}) ===\n{text}')
+    for b in past:
+        parts.append(f"=== Projet passé validé ===\n{summarize_baseline(b)}")
+    return "\n\n".join(parts) + "\n\n"
+
+
+def build_prompt(
+    brief: str,
+    method: ProjectMethod,
+    today: date,
+    references: list[dict] | None = None,
+    past: list[dict] | None = None,
+) -> str:
     rules, _ = _priority_rules(method)
     id_rule = (
         "Ids des livrables : la première lettre de la catégorie suivie d'un numéro (M1, M2, S1, C1, W1...)."
@@ -149,7 +195,7 @@ Consignes :
 - Entre 3 et 6 epics. Entre 3 et 8 risques. Priorités réalistes : tout ne peut pas être critique.
 - Les livrables hors périmètre ou abandonnés reçoivent la priorité la plus basse (ou « Won't » en MoSCoW).
 
-Brief du projet :
+{reference_section(references or [], past or [])}Brief du projet :
 \"\"\"
 {brief.strip()}
 \"\"\"
@@ -215,10 +261,17 @@ def normalize(baseline: Baseline, method: ProjectMethod) -> Baseline:
     return baseline
 
 
-def generate(brief: str, method: ProjectMethod, today: date | None = None) -> Baseline:
+def generate(
+    brief: str,
+    method: ProjectMethod,
+    today: date | None = None,
+    references: list[dict] | None = None,
+    past: list[dict] | None = None,
+) -> Baseline:
     if len(brief.strip()) < 30:
         raise BaselineError("Le brief est trop court : décrivez au moins le besoin, le périmètre et l'échéance.")
-    proposal = llm.generate_json(build_prompt(brief, method, today or date.today()), Baseline)
+    prompt = build_prompt(brief, method, today or date.today(), references, past)
+    proposal = llm.generate_json(prompt, Baseline)
     if proposal is None:
         raise BaselineError("L'IA n'a pas pu générer la baseline (clé absente ou service indisponible). Réessayez.")
     return normalize(proposal, method)

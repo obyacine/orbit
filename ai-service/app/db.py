@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS baselines (
     validated_by TEXT
 );
 CREATE INDEX IF NOT EXISTS baselines_project ON baselines(project_id, version);
+CREATE TABLE IF NOT EXISTS reference_documents (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    kind TEXT NOT NULL,              -- PDF | Word | texte | Markdown
+    role TEXT NOT NULL,              -- template | past_project | standard
+    text TEXT NOT NULL,
+    characters INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT
+);
 CREATE TABLE IF NOT EXISTS project_methods (
     project_id TEXT PRIMARY KEY,
     config TEXT NOT NULL,            -- JSON of app.methods.ProjectMethod
@@ -53,12 +63,22 @@ CREATE TABLE IF NOT EXISTS project_methods (
 """
 
 
+_MIGRATIONS = (
+    "ALTER TABLE baselines ADD COLUMN sources TEXT",  # references the draft was generated from
+)
+
+
 def _connect() -> sqlite3.Connection:
     path = Path(get_settings().database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    for statement in _MIGRATIONS:  # additive, idempotent
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError:
+            pass
     return conn
 
 
@@ -146,21 +166,24 @@ def _baseline_row(r: sqlite3.Row | None) -> dict[str, Any] | None:
     if r is None:
         return None
     d = dict(r)
-    for key in ("method", "content", "work_items"):
+    for key in ("method", "content", "work_items", "sources"):
         d[key] = json.loads(d[key]) if d[key] else None
     return d
 
 
-def save_baseline_draft(project_id: str, brief: str, method: dict, content: dict, created_by: str | None) -> dict:
+def save_baseline_draft(
+    project_id: str, brief: str, method: dict, content: dict, created_by: str | None, sources: dict | None = None
+) -> dict:
     """A new draft version. Earlier versions are kept; validated ones are never modified."""
     bid = str(uuid.uuid4())
     with _connect() as c:
         version = c.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM baselines WHERE project_id = ?", (project_id,)).fetchone()[0]
         c.execute(
-            "INSERT INTO baselines (id, project_id, version, status, brief, method, content, created_at, created_by) "
-            "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+            "INSERT INTO baselines (id, project_id, version, status, brief, method, content, created_at, created_by, sources) "
+            "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)",
             (bid, project_id, version, brief, json.dumps(method, ensure_ascii=False),
-             json.dumps(content, ensure_ascii=False), _now(), created_by),
+             json.dumps(content, ensure_ascii=False), _now(), created_by,
+             json.dumps(sources or {}, ensure_ascii=False)),
         )
     return get_baseline(bid)
 
@@ -199,3 +222,41 @@ def validate_baseline(baseline_id: str, validated_by: str, content: dict, work_i
             (json.dumps(content, ensure_ascii=False), json.dumps(work_items), _now(), validated_by, baseline_id),
         )
     return get_baseline(baseline_id)
+
+
+
+def past_validated_baselines(exclude_project_id: str | None = None, limit: int = 3) -> list[dict]:
+    """Latest validated baseline of other projects: the organization's own examples."""
+    with _connect() as c:
+        rows = c.execute(
+            "SELECT * FROM baselines b WHERE status = 'validated' AND project_id != ? AND version = ("
+            "  SELECT MAX(version) FROM baselines WHERE project_id = b.project_id AND status = 'validated'"
+            ") ORDER BY validated_at DESC LIMIT ?",
+            (exclude_project_id or "", limit),
+        ).fetchall()
+    return [_baseline_row(r) for r in rows]
+
+
+# ------------------------------------------------------------------ organization library (Module 1)
+
+
+def add_reference(filename: str, kind: str, role: str, text: str, created_by: str | None) -> dict:
+    rid = str(uuid.uuid4())
+    with _connect() as c:
+        c.execute(
+            "INSERT INTO reference_documents (id, filename, kind, role, text, characters, created_at, created_by) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, filename, kind, role, text, len(text), _now(), created_by),
+        )
+    return next(r for r in list_references() if r["id"] == rid)
+
+
+def list_references(with_text: bool = False) -> list[dict]:
+    cols = "*" if with_text else "id, filename, kind, role, characters, created_at, created_by"
+    with _connect() as c:
+        return [dict(r) for r in c.execute(f"SELECT {cols} FROM reference_documents ORDER BY created_at DESC").fetchall()]
+
+
+def delete_reference(reference_id: str) -> bool:
+    with _connect() as c:
+        return c.execute("DELETE FROM reference_documents WHERE id = ?", (reference_id,)).rowcount > 0
