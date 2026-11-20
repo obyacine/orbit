@@ -183,8 +183,8 @@ Steps ① to ④ contain **no LLM call**.
 
 | Setting | Value |
 |---|---|
-| Main model / fallback | `gemini-3.5-flash-lite` (≈ 2 s per text) / `gemini-3.5-flash` |
-| Timeout per call | 15 s for report texts, 90 s for a whole baseline |
+| Main model / fallbacks | `gemini-3.5-flash-lite` (≈ 2 s per text), then `gemini-3.5-flash`, then `gemini-flash-latest` |
+| Timeout per call | 15 s for report texts, 45 s for a whole baseline (per model) |
 | Retries | 429, 500, 503: two retries on the same model (1 s, 2 s); other errors and timeouts go straight to the fallback model |
 | When every model fails | `write()` returns `None` → template text (numbers unchanged); `generate_json()` returns `None` → *"try again"* message |
 | What leaves the server | Module 1: the brief, the method rules and the library excerpts. Module 2: computed aggregates only — never task contents or user names |

@@ -62,3 +62,12 @@ def test_everything_down_returns_none_for_template_fallback(fake_gemini):
     _, behaviour = fake_gemini
     behaviour.update(main=FakeError(503), backup=FakeError(429))
     assert llm.write("x", {}) is None
+
+
+def test_several_fallback_models_are_tried_in_order(fake_gemini, monkeypatch):
+    calls, behaviour = fake_gemini
+    monkeypatch.setenv("GEMINI_FALLBACK_MODEL", "backup, third")
+    get_settings.cache_clear()
+    behaviour.update(main=FakeError(404), backup=FakeError(404), third="ok")
+    assert llm.write("x", {}) == "ok"
+    assert calls == ["main", "backup", "third"]

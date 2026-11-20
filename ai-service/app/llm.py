@@ -37,8 +37,10 @@ def is_enabled() -> bool:
 
 
 def _models() -> list[str]:
+    """Main model, then each fallback (GEMINI_FALLBACK_MODEL may list several, comma-separated)."""
     s = get_settings()
-    return [m for m in dict.fromkeys((s.gemini_model, s.gemini_fallback_model)) if m]
+    fallbacks = [m.strip() for m in s.gemini_fallback_model.split(",")]
+    return [m for m in dict.fromkeys([s.gemini_model, *fallbacks]) if m]
 
 
 def write(instruction: str, data: dict[str, Any], max_words: int = 150) -> str | None:
@@ -80,11 +82,12 @@ def write(instruction: str, data: dict[str, Any], max_words: int = 150) -> str |
     return None
 
 
-def generate_json(instruction: str, schema: type, timeout_seconds: int = 90) -> Any | None:
+def generate_json(instruction: str, schema: type, timeout_seconds: int = 45) -> Any | None:
     """Structured generation: returns an instance of the pydantic `schema`, or None if no model answered.
 
     Used for extraction (brief -> baseline), where the LLM proposes and a human validates.
-    Longer timeout than `write()`: the output is a whole document.
+    Longer timeout than `write()` (the output is a whole document), but short enough to move on to the
+    next model quickly when one is overloaded.
     """
     settings = get_settings()
     if not settings.gemini_api_key:

@@ -174,7 +174,7 @@ services:
       PLANE_WORKSPACE_SLUG: ${ORBIT_WORKSPACE_SLUG:?set ORBIT_WORKSPACE_SLUG in .env}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
-      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash,gemini-flash-latest}
       DATABASE_PATH: /app/data/orbit.db
       ORBIT_INTERNAL_TOKEN: ${ORBIT_INTERNAL_TOKEN}
     volumes:

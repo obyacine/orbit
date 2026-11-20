@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"  # fast (~1-2 s): reports are short prose from computed data
-    gemini_fallback_model: str = "gemini-3.5-flash"  # used when the main model is overloaded
+    gemini_fallback_model: str = "gemini-3.5-flash,gemini-flash-latest"  # tried in order when the main model is overloaded
 
     database_path: str = "./data/orbit.db"
     orbit_internal_token: str = "change-me"
