@@ -8,6 +8,7 @@ import { useMemo, useCallback } from "react";
 // plane imports
 import { EUserPermissions, EUserPermissionsLevel } from "@plane/constants";
 import {
+  AiStar1Outline,
   CyclesOutline,
   IntakeOutline,
   ModuleOutline,
@@ -99,6 +100,16 @@ export const useNavigationItems = ({
         access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
         shouldRender: !!project?.inbox_view,
         sortOrder: 6,
+      },
+      {
+        i18n_key: "sidebar.ai_agent",
+        key: "agent",
+        name: "AI Agent",
+        href: `/${workspaceSlug}/projects/${projectId}/agent`,
+        icon: AiStar1Outline,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+        shouldRender: true,
+        sortOrder: 7,
       },
     ],
     [project]

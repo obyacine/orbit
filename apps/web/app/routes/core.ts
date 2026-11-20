@@ -216,6 +216,13 @@ export const coreRoutes: RouteConfigEntry[] = [
               "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/intake/page.tsx"
             ),
           ]),
+          // Orbit AI agent
+          layout("./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/agent/layout.tsx", [
+            route(
+              ":workspaceSlug/projects/:projectId/agent",
+              "./(all)/[workspaceSlug]/(projects)/projects/(detail)/[projectId]/agent/page.tsx"
+            ),
+          ]),
         ]),
 
         // Project Archives - Issues, Cycles, Modules

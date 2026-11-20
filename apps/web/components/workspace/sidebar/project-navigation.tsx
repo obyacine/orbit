@@ -11,6 +11,7 @@ import { useParams, usePathname } from "next/navigation";
 import { EUserPermissionsLevel, EUserPermissions } from "@plane/constants";
 import { useTranslation } from "@plane/i18n";
 import {
+  AiStar1Outline,
   CyclesOutline,
   IntakeOutline,
   ModuleOutline,
@@ -137,6 +138,16 @@ export const ProjectNavigation = observer(function ProjectNavigation(props: TPro
         access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
         shouldRender: project?.inbox_view ?? false,
         sortOrder: 6,
+      },
+      {
+        i18n_key: "sidebar.ai_agent",
+        key: "agent",
+        name: "AI Agent",
+        href: `/${workspaceSlug}/projects/${projectId}/agent`,
+        icon: AiStar1Outline,
+        access: [EUserPermissions.ADMIN, EUserPermissions.MEMBER, EUserPermissions.GUEST],
+        shouldRender: true,
+        sortOrder: 7,
       },
     ],
     [project]
