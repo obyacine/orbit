@@ -149,8 +149,18 @@ class PlaneClient:
     def list_modules(self, project_id: str) -> list[dict[str, Any]]:
         return self._get_all(f"projects/{project_id}/modules/")
 
-    def create_module(self, project_id: str, name: str, description: str = "") -> dict[str, Any]:
-        return self._post(f"projects/{project_id}/modules/", {"name": name, "description": description})
+    def create_module(
+        self,
+        project_id: str,
+        name: str,
+        description: str = "",
+        start_date: str | None = None,
+        target_date: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"name": name, "description": description}
+        if start_date and target_date:  # dated modules are phases (Waterfall / hybrid)
+            payload |= {"start_date": start_date, "target_date": target_date}
+        return self._post(f"projects/{project_id}/modules/", payload)
 
     def list_module_issues(self, project_id: str, module_id: str) -> list[dict[str, Any]]:
         return self._get_all(f"projects/{project_id}/modules/{module_id}/module-issues/")

@@ -50,7 +50,7 @@ def detect_anomalies(
     for i in snapshot.issues:
         if i.status in ("done", "cancelled") or i.tier in (None, m.EXCLUDED):
             continue
-        ref = f"{fw.name} / {i.category}"
+        ref = f"Baseline {i.baseline_id} · {fw.name} / {i.category}" if i.baseline_id else f"{fw.name} / {i.category}"
         what = f"{i.category} « {i.title} »"
         cycle = cycles.get(i.cycle_id) if i.cycle_id else None
         deadline = i.target_date or (cycle.end_date if cycle else None)

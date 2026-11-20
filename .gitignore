@@ -117,3 +117,7 @@ packages/i18n/src/types/keys.generated.ts
 
 # Local security notes (not for version control)
 /security/
+
+# Orbit agent: demo scripts are part of the project
+!ai-service/scripts/
+ai-service/scripts/__pycache__/

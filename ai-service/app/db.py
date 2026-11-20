@@ -29,6 +29,21 @@ CREATE TABLE IF NOT EXISTS reports (
     approved_by TEXT
 );
 CREATE INDEX IF NOT EXISTS reports_project ON reports(project_id, type, created_at);
+CREATE TABLE IF NOT EXISTS baselines (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    status TEXT NOT NULL,            -- draft | validated
+    brief TEXT NOT NULL,
+    method TEXT NOT NULL,            -- JSON: method used to generate it
+    content TEXT NOT NULL,           -- JSON of module1.baseline.Baseline
+    work_items TEXT,                 -- JSON: deliverable id -> work item id, once pushed
+    created_at TEXT NOT NULL,
+    created_by TEXT,
+    validated_at TEXT,
+    validated_by TEXT
+);
+CREATE INDEX IF NOT EXISTS baselines_project ON baselines(project_id, version);
 CREATE TABLE IF NOT EXISTS project_methods (
     project_id TEXT PRIMARY KEY,
     config TEXT NOT NULL,            -- JSON of app.methods.ProjectMethod
@@ -122,3 +137,65 @@ def save_method(project_id: str, config: dict, updated_by: str | None = None) ->
             (project_id, json.dumps(config, ensure_ascii=False), _now(), updated_by),
         )
     return get_method(project_id)
+
+
+# ------------------------------------------------------------------ baselines (Module 1)
+
+
+def _baseline_row(r: sqlite3.Row | None) -> dict[str, Any] | None:
+    if r is None:
+        return None
+    d = dict(r)
+    for key in ("method", "content", "work_items"):
+        d[key] = json.loads(d[key]) if d[key] else None
+    return d
+
+
+def save_baseline_draft(project_id: str, brief: str, method: dict, content: dict, created_by: str | None) -> dict:
+    """A new draft version. Earlier versions are kept; validated ones are never modified."""
+    bid = str(uuid.uuid4())
+    with _connect() as c:
+        version = c.execute("SELECT COALESCE(MAX(version), 0) + 1 FROM baselines WHERE project_id = ?", (project_id,)).fetchone()[0]
+        c.execute(
+            "INSERT INTO baselines (id, project_id, version, status, brief, method, content, created_at, created_by) "
+            "VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)",
+            (bid, project_id, version, brief, json.dumps(method, ensure_ascii=False),
+             json.dumps(content, ensure_ascii=False), _now(), created_by),
+        )
+    return get_baseline(bid)
+
+
+def get_baseline(baseline_id: str) -> dict | None:
+    with _connect() as c:
+        return _baseline_row(c.execute("SELECT * FROM baselines WHERE id = ?", (baseline_id,)).fetchone())
+
+
+def list_baselines(project_id: str) -> list[dict]:
+    with _connect() as c:
+        rows = c.execute("SELECT * FROM baselines WHERE project_id = ? ORDER BY version DESC", (project_id,)).fetchall()
+    return [_baseline_row(r) for r in rows]
+
+
+def latest_validated_baseline(project_id: str) -> dict | None:
+    with _connect() as c:
+        return _baseline_row(c.execute(
+            "SELECT * FROM baselines WHERE project_id = ? AND status = 'validated' ORDER BY version DESC LIMIT 1",
+            (project_id,),
+        ).fetchone())
+
+
+def update_baseline_content(baseline_id: str, content: dict) -> dict | None:
+    with _connect() as c:
+        c.execute("UPDATE baselines SET content = ? WHERE id = ? AND status = 'draft'",
+                  (json.dumps(content, ensure_ascii=False), baseline_id))
+    return get_baseline(baseline_id)
+
+
+def validate_baseline(baseline_id: str, validated_by: str, content: dict, work_items: dict) -> dict | None:
+    with _connect() as c:
+        c.execute(
+            "UPDATE baselines SET status = 'validated', content = ?, work_items = ?, validated_at = ?, validated_by = ? "
+            "WHERE id = ? AND status = 'draft'",
+            (json.dumps(content, ensure_ascii=False), json.dumps(work_items), _now(), validated_by, baseline_id),
+        )
+    return get_baseline(baseline_id)

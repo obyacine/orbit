@@ -32,6 +32,7 @@ class Issue:
     # Set by app.methods.classify() according to the PM's prioritization method
     category: str | None = None  # PM's vocabulary: "Must-Have", "Basique", "WSJF 13"...
     tier: str | None = None  # critical | important | optional | excluded
+    baseline_id: str | None = None  # deliverable of the validated baseline (M2, D5...), set by Module 1
 
 
 @dataclass

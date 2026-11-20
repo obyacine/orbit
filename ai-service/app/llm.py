@@ -78,3 +78,57 @@ def write(instruction: str, data: dict[str, Any], max_words: int = 150) -> str |
                 break  # next model
     log.warning("No LLM model answered, using template fallback")
     return None
+
+
+def generate_json(instruction: str, schema: type, timeout_seconds: int = 90) -> Any | None:
+    """Structured generation: returns an instance of the pydantic `schema`, or None if no model answered.
+
+    Used for extraction (brief -> baseline), where the LLM proposes and a human validates.
+    Longer timeout than `write()`: the output is a whole document.
+    """
+    settings = get_settings()
+    if not settings.gemini_api_key:
+        return None
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(
+            api_key=settings.gemini_api_key,
+            http_options=types.HttpOptions(timeout=timeout_seconds * 1000),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("LLM client unavailable: %s", exc)
+        return None
+
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_BASELINE,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema=schema,
+    )
+    for model in _models():
+        for attempt in range(RETRIES + 1):
+            try:
+                resp = client.models.generate_content(model=model, contents=instruction, config=config)
+                if resp.parsed is not None:
+                    return resp.parsed
+                return schema.model_validate_json(resp.text or "")
+            except Exception as exc:  # noqa: BLE001
+                code = getattr(exc, "code", None)
+                if code in TRANSIENT_CODES and attempt < RETRIES:
+                    log.info("LLM %s busy (%s), retry %d/%d", model, code, attempt + 1, RETRIES)
+                    time.sleep(BACKOFF_SECONDS * 2**attempt)
+                    continue
+                log.warning("LLM %s failed on structured output (%s): %s", model, code, str(exc)[:300])
+                break
+    return None
+
+
+SYSTEM_BASELINE = (
+    "Tu es un chef de projet senior (PMP, PRINCE2, Scrum) dans une grande organisation. "
+    "À partir d'un brief, tu prépares le cadrage formel du projet en français : charte, livrables priorisés, "
+    "découpage et planning. Tu restes fidèle au brief : tu n'inventes ni budget, ni date, ni nom de personne "
+    "absents du brief ; si une information manque, tu écris « À préciser ». Tu proposes des livrables concrets, "
+    "vérifiables, formulés comme des tâches livrables par une équipe."
+)

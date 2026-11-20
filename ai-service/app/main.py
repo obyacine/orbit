@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app import db, llm
 from app.config import get_settings
 from app.methods import ProjectMethod, catalog, classify
+from app.module1 import baseline as m1
 from app.module2.metrics import compute_metrics
 from app.module2.reports import build_progress_report, build_situation_report, to_markdown
 from app.module2.rules import detect_anomalies
@@ -25,12 +26,22 @@ def _method(project_id: str) -> ProjectMethod:
     return ProjectMethod.from_dict(saved["config"] if saved else None)
 
 
+def _link_baseline(snapshot: ProjectSnapshot) -> None:
+    """Tie each work item to the deliverable of the validated baseline it comes from."""
+    validated = db.latest_validated_baseline(snapshot.project_id)
+    if validated and validated["work_items"]:
+        by_issue = {issue_id: deliverable for deliverable, issue_id in validated["work_items"].items()}
+        for i in snapshot.issues:
+            i.baseline_id = by_issue.get(i.id)
+
+
 def _load(project_id: str, with_comments: bool = False) -> tuple[ProjectSnapshot, dict[str, str], ProjectMethod]:
     """Snapshot classified with the PM's method, plus the last comment of each blocked issue (reason of the block)."""
     method = _method(project_id)
     try:
         with PlaneClient() as client:
             snapshot = classify(build_snapshot(client, project_id), method)
+            _link_baseline(snapshot)
             comments: dict[str, str] = {}
             if with_comments:
                 for b in compute_metrics(snapshot, method=method).blocked:
@@ -155,3 +166,82 @@ def approve_report(report_id: str, body: ApproveBody, x_orbit_token: str | None 
     if not db.get_report(report_id):
         raise HTTPException(status_code=404, detail="Report not found")
     return db.approve_report(report_id, body.approved_by, body.markdown)
+
+
+# ------------------------------------------------------------------ Module 1: brief -> baseline
+
+
+class DraftBody(BaseModel):
+    brief: str
+    created_by: str | None = None
+
+
+@app.post("/projects/{project_id}/baseline/draft")
+def draft_baseline(project_id: str, body: DraftBody, x_orbit_token: str | None = Header(default=None)) -> dict:
+    """The LLM turns the PM's brief into a draft baseline, in the project's method. Nothing is created yet."""
+    _check_internal_token(x_orbit_token)
+    method = _method(project_id)
+    try:
+        proposal = m1.generate(body.brief, method)
+    except m1.BaselineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return db.save_baseline_draft(project_id, body.brief, method.to_dict(), proposal.model_dump(), body.created_by)
+
+
+@app.get("/projects/{project_id}/baselines")
+def list_project_baselines(project_id: str, x_orbit_token: str | None = Header(default=None)) -> list:
+    _check_internal_token(x_orbit_token)
+    return db.list_baselines(project_id)
+
+
+class BaselineContentBody(BaseModel):
+    content: dict
+
+
+def _draft_or_error(baseline_id: str) -> dict:
+    found = db.get_baseline(baseline_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Baseline introuvable")
+    if found["status"] != "draft":
+        raise HTTPException(status_code=409, detail="Cette baseline est validée : elle ne peut plus être modifiée")
+    return found
+
+
+@app.put("/baselines/{baseline_id}")
+def edit_baseline(baseline_id: str, body: BaselineContentBody, x_orbit_token: str | None = Header(default=None)) -> dict:
+    """The PM edits the draft (charter, deliverables, priorities...)."""
+    _check_internal_token(x_orbit_token)
+    found = _draft_or_error(baseline_id)
+    try:
+        content = m1.normalize(m1.Baseline.model_validate(body.content), ProjectMethod.from_dict(found["method"]))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Baseline invalide : {exc}") from exc
+    return db.update_baseline_content(baseline_id, content.model_dump())
+
+
+class ValidateBody(BaseModel):
+    validated_by: str
+    content: dict | None = None  # last edits, if any
+
+
+@app.post("/baselines/{baseline_id}/validate")
+def validate_and_push_baseline(baseline_id: str, body: ValidateBody, x_orbit_token: str | None = Header(default=None)) -> dict:
+    """Freeze the baseline and create it in the tracker: labels, modules, cycles, work items."""
+    _check_internal_token(x_orbit_token)
+    found = _draft_or_error(baseline_id)
+    if db.latest_validated_baseline(found["project_id"]):
+        raise HTTPException(status_code=409, detail="Ce projet a déjà une baseline validée")
+    method = ProjectMethod.from_dict(found["method"])
+    try:
+        baseline = m1.normalize(m1.Baseline.model_validate(body.content or found["content"]), method)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Baseline invalide : {exc}") from exc
+    try:
+        with PlaneClient() as client:
+            pushed = m1.push(client, found["project_id"], baseline, method)
+    except PlaneError as exc:
+        raise HTTPException(status_code=502, detail=f"Création dans Orbit impossible : {exc}") from exc
+    # The project is now run with the method the baseline was built for.
+    db.save_method(found["project_id"], method.to_dict(), body.validated_by)
+    result = db.validate_baseline(baseline_id, body.validated_by, baseline.model_dump(), pushed["work_items"])
+    return {**result, "counts": pushed["counts"]}
