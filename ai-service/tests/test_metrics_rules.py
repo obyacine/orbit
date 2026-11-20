@@ -77,3 +77,11 @@ def test_anomalies():
     late_d = next(a for a in anomalies if a.rule == "critical_late")
     assert late_d.message == "Must-Have « D » en retard de 2 j"
     assert late_d.baseline_ref == "MoSCoW / Must-Have"
+
+
+def test_unassigned_message_reads_well_when_the_deadline_has_passed():
+    snap = snapshot()
+    next(i for i in snap.issues if i.key == "E").target_date = d(-1)
+    anomalies = detect_anomalies(snap, compute_metrics(snap, TODAY, METHOD), TODAY, METHOD)
+    msg = next(a.message for a in anomalies if a.rule == "critical_unassigned")
+    assert msg == "Must-Have « E » non assigné, échéance dépassée de 1 j"

@@ -31,6 +31,13 @@ class Anomaly:
         return asdict(self)
 
 
+def _when(deadline: date, today: date) -> str:
+    days = (deadline - today).days
+    if days < 0:
+        return f"échéance dépassée de {-days} j"
+    return "échéance aujourd'hui" if days == 0 else f"échéance dans {days} j"
+
+
 def detect_anomalies(
     snapshot: ProjectSnapshot,
     metrics: ProjectMetrics,
@@ -59,7 +66,7 @@ def detect_anomalies(
         if i.tier == m.CRITICAL:
             if not i.assignees and deadline and (deadline - today).days <= unassigned_window_days:
                 out.append(Anomaly("critical_unassigned", CRITICAL,
-                                   f"{what} non assigné, échéance dans {(deadline - today).days} j", i.key, ref))
+                                   f"{what} non assigné, {_when(deadline, today)}", i.key, ref))
             if late_days:
                 out.append(Anomaly("critical_late", CRITICAL, f"{what} en retard de {late_days} j", i.key, ref))
             if i.key in blocked_keys:
