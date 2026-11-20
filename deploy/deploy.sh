@@ -13,6 +13,8 @@ echo "==> Orbit ${ORBIT_IMAGE_TAG}: pulling images"
 
 echo "==> Starting the stack"
 "${compose[@]}" up -d --remove-orphans
+# Remembered so that a configuration change applied by Ansible restarts this exact build.
+echo "${ORBIT_IMAGE_TAG}" > IMAGE_TAG
 
 echo "==> Waiting for the API"
 api_port="$(grep -E '^ORBIT_API_PORT=' .env | cut -d= -f2)"
