@@ -84,6 +84,13 @@ class PlaneClient:
     def get_project(self, project_id: str) -> dict[str, Any]:
         return self._request("GET", f"projects/{project_id}/")
 
+    def enable_features(self, project_id: str, *, modules: bool = True, cycles: bool = False) -> None:
+        """Projects created from the UI start with modules and cycles turned off: creating one then fails
+        with 400 "Modules are not enabled for this project"."""
+        payload = {k: True for k, on in (("module_view", modules), ("cycle_view", cycles)) if on}
+        if payload:
+            self._patch(f"projects/{project_id}/", payload)
+
     def create_project(self, name: str, identifier: str, description: str = "") -> dict[str, Any]:
         return self._post(
             "projects/",

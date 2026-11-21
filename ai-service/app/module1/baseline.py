@@ -304,6 +304,7 @@ def _html(text: str) -> str:
 def push(client: PlaneClient, project_id: str, baseline: Baseline, method: ProjectMethod) -> dict[str, Any]:
     """Create the validated baseline in the tracker. Returns the deliverable -> work item mapping."""
     d = method.delivery_method
+    client.enable_features(project_id, modules=bool(baseline.epics), cycles=d.uses_cycles and bool(baseline.milestones))
     existing_labels = {lab["name"].casefold(): lab["id"] for lab in client.list_labels(project_id)}
 
     def label_id(name: str, tier: str) -> str:

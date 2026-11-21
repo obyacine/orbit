@@ -49,6 +49,9 @@ class FakePlane:
         self.n += 1
         return f"id{self.n}"
 
+    def enable_features(self, pid, *, modules=True, cycles=False):
+        self.calls.append(("features", modules, cycles))
+
     def list_labels(self, pid):
         return [{"name": "Must", "id": "existing-must"}]
 
@@ -86,6 +89,7 @@ def test_push_creates_structure_and_reuses_labels():
     issues = [c for c in fake.calls if c[0] == "issue"]
     assert issues[0] == ("issue", "[M1] L0", "urgent", ("existing-must",))
     assert set(out["work_items"]) == {"M1", "S1"}
+    assert fake.calls[0] == ("features", True, True)  # UI-created projects start with modules/cycles off
 
 
 def test_push_score_method_uses_score_labels():
@@ -94,3 +98,4 @@ def test_push_score_method_uses_score_labels():
     m1.push(fake, "p", m1.normalize(proposal(["13"]), method), method)
     assert ("label", "WSJF:13") in fake.calls
     assert not any(c[0] == "cycle" for c in fake.calls)
+    assert fake.calls[0] == ("features", True, False)  # Kanban: no cycles to turn on
