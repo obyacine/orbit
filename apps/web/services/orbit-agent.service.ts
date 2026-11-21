@@ -159,6 +159,7 @@ export type TLibrary = {
     characters: number;
     created_at: string;
     created_by: string | null;
+    has_layout: boolean;
   }[];
   past_projects: { project_id: string; title: string; version: number; validated_at: string; deliverables: number }[];
 };
@@ -267,6 +268,27 @@ export class OrbitAgentService extends APIService {
   async removeFromLibrary(workspaceSlug: string, projectId: string, referenceId: string): Promise<unknown> {
     return this.delete(`${this.base(workspaceSlug, projectId)}/library/${referenceId}/`)
       .then((res) => res?.data)
+      .catch((error) => {
+        throw error?.response?.data;
+      });
+  }
+
+  async exportBaseline(
+    workspaceSlug: string,
+    projectId: string,
+    baselineId: string
+  ): Promise<{ blob: Blob; filename: string; layout: string; appended: number }> {
+    return this.get(`${this.base(workspaceSlug, projectId)}/baselines/${baselineId}/export/`, { responseType: "blob" })
+      .then((res) => {
+        const disposition: string = res?.headers?.["content-disposition"] ?? "";
+        const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "Charte.docx";
+        return {
+          blob: res?.data as Blob,
+          filename,
+          layout: decodeURIComponent(res?.headers?.["x-orbit-layout"] ?? "orbit"),
+          appended: Number(res?.headers?.["x-orbit-appended"] ?? 0),
+        };
+      })
       .catch((error) => {
         throw error?.response?.data;
       });

@@ -1,15 +1,16 @@
 import logging
 import re
+from urllib.parse import quote
 from typing import Annotated
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 
 from app import db, llm
 from app.config import get_settings
 from app.methods import ProjectMethod, catalog, classify
 from app.module1 import baseline as m1
-from app.module1 import documents
+from app.module1 import documents, export, template_fill
 from app.module2.metrics import compute_metrics
 from app.module2.reports import build_progress_report, build_situation_report, to_markdown
 from app.module2.rules import detect_anomalies
@@ -334,7 +335,8 @@ async def add_to_library(
         doc = documents.extract(file.filename or "document", data)
     except documents.DocumentError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return db.add_reference(doc.filename, doc.kind, role, doc.text, created_by)
+    original = data if doc.kind == "Word" else None  # Word files keep their layout for exports
+    return db.add_reference(doc.filename, doc.kind, role, doc.text, created_by, original)
 
 
 @app.delete("/library/{reference_id}")
@@ -343,3 +345,35 @@ def remove_from_library(reference_id: str, x_orbit_token: str | None = Header(de
     if not db.delete_reference(reference_id):
         raise HTTPException(status_code=404, detail="Document introuvable")
     return {"deleted": reference_id}
+
+
+@app.get("/baselines/{baseline_id}/export.docx")
+def export_baseline(baseline_id: str, x_orbit_token: str | None = Header(default=None)) -> Response:
+    """The charter as a Word document: the PM's own Word template filled with the project, or Orbit's layout."""
+    _check_internal_token(x_orbit_token)
+    found = db.get_baseline(baseline_id)
+    if not found:
+        raise HTTPException(status_code=404, detail="Baseline introuvable")
+    template = db.latest_word_template()
+    layout, report = "orbit", {}
+    content = None
+    if template:
+        try:
+            content, report = template_fill.fill_template(template["original"], found)
+            layout = template["filename"]
+        except Exception as exc:  # noqa: BLE001 - an unusual template must not block the export
+            log.warning("Template %s could not be filled, using Orbit's layout: %s", template["filename"], exc)
+    if content is None:
+        content = export.charter_docx(found)
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{export.filename(found)}"',
+            # Which layout was used, and how the template was filled (shown to the PM).
+            "X-Orbit-Layout": quote(layout),
+            "X-Orbit-Filled": str(len(report.get("filled", []))),
+            "X-Orbit-Appended": str(len(report.get("appended", []))),
+            "Access-Control-Expose-Headers": "X-Orbit-Layout, X-Orbit-Filled, X-Orbit-Appended",
+        },
+    )

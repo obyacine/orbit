@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS project_methods (
 
 _MIGRATIONS = (
     "ALTER TABLE baselines ADD COLUMN sources TEXT",  # references the draft was generated from
+    "ALTER TABLE reference_documents ADD COLUMN original BLOB",  # the .docx itself, to fill it at export
 )
 
 
@@ -240,21 +241,38 @@ def past_validated_baselines(exclude_project_id: str | None = None, limit: int =
 # ------------------------------------------------------------------ organization library (Module 1)
 
 
-def add_reference(filename: str, kind: str, role: str, text: str, created_by: str | None) -> dict:
+def add_reference(
+    filename: str, kind: str, role: str, text: str, created_by: str | None, original: bytes | None = None
+) -> dict:
+    """`original` is kept for Word templates, so exports can be laid out in the PM's own document."""
     rid = str(uuid.uuid4())
     with _connect() as c:
         c.execute(
-            "INSERT INTO reference_documents (id, filename, kind, role, text, characters, created_at, created_by) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (rid, filename, kind, role, text, len(text), _now(), created_by),
+            "INSERT INTO reference_documents (id, filename, kind, role, text, characters, created_at, created_by, original) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, filename, kind, role, text, len(text), _now(), created_by, original),
         )
     return next(r for r in list_references() if r["id"] == rid)
 
 
 def list_references(with_text: bool = False) -> list[dict]:
-    cols = "*" if with_text else "id, filename, kind, role, characters, created_at, created_by"
+    cols = ("id, filename, kind, role, text, characters, created_at, created_by" if with_text
+            else "id, filename, kind, role, characters, created_at, created_by")
     with _connect() as c:
-        return [dict(r) for r in c.execute(f"SELECT {cols} FROM reference_documents ORDER BY created_at DESC").fetchall()]
+        rows = c.execute(
+            f"SELECT {cols}, original IS NOT NULL AS has_layout FROM reference_documents ORDER BY created_at DESC"
+        ).fetchall()
+    return [{**dict(r), "has_layout": bool(r["has_layout"])} for r in rows]
+
+
+def latest_word_template() -> dict | None:
+    """The most recent Word template of the library, with its file."""
+    with _connect() as c:
+        r = c.execute(
+            "SELECT id, filename, original FROM reference_documents WHERE role = 'template' AND original IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    return dict(r) if r else None
 
 
 def delete_reference(reference_id: str) -> bool:

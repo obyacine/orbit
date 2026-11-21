@@ -145,7 +145,9 @@ export function OrbitAgentLibrary({ workspaceSlug, projectId, isAdmin }: Props) 
                     <span className="text-tertiary">
                       {" "}
                       · {ROLES.find((r) => r.id === d.role)?.label ?? d.role} · {d.characters.toLocaleString("fr-FR")}{" "}
-                      caractères{d.created_by ? ` · ajouté par ${d.created_by}` : ""}
+                      caractères
+                      {d.has_layout && d.role === "template" ? " · mise en page utilisée pour les exports" : ""}
+                      {d.created_by ? ` · ajouté par ${d.created_by}` : ""}
                     </span>
                   </span>
                   {isAdmin && (

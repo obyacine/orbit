@@ -8,6 +8,7 @@ from plane.app.views.orbit_agent import (
     OrbitAgentAnalysisEndpoint,
     OrbitAgentBaselineDetailEndpoint,
     OrbitAgentBaselineDraftEndpoint,
+    OrbitAgentBaselineExportEndpoint,
     OrbitAgentBaselinesEndpoint,
     OrbitAgentBaselineValidateEndpoint,
     OrbitAgentApproveReportEndpoint,
@@ -29,6 +30,11 @@ urlpatterns = [
     path(f"{_BASE}/baselines/", OrbitAgentBaselinesEndpoint.as_view(), name="orbit-agent-baselines"),
     path(f"{_BASE}/baselines/draft/", OrbitAgentBaselineDraftEndpoint.as_view(), name="orbit-agent-baseline-draft"),
     path(f"{_BASE}/baselines/<uuid:baseline_id>/", OrbitAgentBaselineDetailEndpoint.as_view(), name="orbit-agent-baseline"),
+    path(
+        f"{_BASE}/baselines/<uuid:baseline_id>/export/",
+        OrbitAgentBaselineExportEndpoint.as_view(),
+        name="orbit-agent-baseline-export",
+    ),
     path(
         f"{_BASE}/baselines/<uuid:baseline_id>/validate/",
         OrbitAgentBaselineValidateEndpoint.as_view(),

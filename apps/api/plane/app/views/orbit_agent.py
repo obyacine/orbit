@@ -10,6 +10,7 @@ user's role in the project, then forward the call with the shared secret (X-Orbi
 
 import requests
 from django.conf import settings
+from django.http import HttpResponse
 from rest_framework import status
 from rest_framework.response import Response
 
@@ -229,3 +230,32 @@ class OrbitAgentLibraryDocumentEndpoint(BaseAPIView):
     @allow_permission([ROLE.ADMIN])
     def delete(self, request, slug, project_id, reference_id):
         return _forward("DELETE", f"/library/{reference_id}")
+
+
+class OrbitAgentBaselineExportEndpoint(BaseAPIView):
+    """The charter as a Word document, laid out in the organization's own template when there is one."""
+
+    @allow_permission(_READ)
+    def get(self, request, slug, project_id, baseline_id):
+        error = _baseline_of_project(baseline_id, project_id)
+        if error:
+            return error
+        try:
+            resp = requests.get(
+                f"{settings.ORBIT_AI_SERVICE_URL.rstrip('/')}/baselines/{baseline_id}/export.docx",
+                headers={"X-Orbit-Token": settings.ORBIT_INTERNAL_TOKEN},
+                timeout=60,
+            )
+        except requests.RequestException:
+            return Response(
+                {"error": "L'agent IA est injoignable. Vérifiez que le service ai-service est démarré."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        if resp.status_code >= 400:
+            return Response({"error": "Export impossible"}, status=resp.status_code)
+        out = HttpResponse(resp.content, content_type=resp.headers.get("content-type"))
+        for header in ("Content-Disposition", "X-Orbit-Layout", "X-Orbit-Filled", "X-Orbit-Appended"):
+            if header in resp.headers:
+                out[header] = resp.headers[header]
+        out["Access-Control-Expose-Headers"] = "Content-Disposition, X-Orbit-Layout, X-Orbit-Filled, X-Orbit-Appended"
+        return out

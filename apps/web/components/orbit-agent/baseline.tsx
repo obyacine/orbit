@@ -180,7 +180,7 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
   const [current, setCurrent] = useState<TBaseline | null>(null);
   const [content, setContent] = useState<TBaselineContent | null>(null);
   const [brief, setBrief] = useState("");
-  const [busy, setBusy] = useState<"draft" | "validate" | null>(null);
+  const [busy, setBusy] = useState<"draft" | "validate" | "export" | null>(null);
   const [writingBrief, setWritingBrief] = useState(false);
   const [imported, setImported] = useState<TExtractedDocument[]>([]);
   const [importing, setImporting] = useState(false);
@@ -249,6 +249,39 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
       setToast({ type: "success", title: "Cadrage généré", message: "Relisez, ajustez les livrables, puis validez." });
     } catch (error) {
       setToast({ type: "error", title: "Génération impossible", message: errorMessage(error) });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // The charter as a Word file, laid out in the organization's template (library) when there is one.
+  const exportCharter = async () => {
+    if (!current) return;
+    setBusy("export");
+    try {
+      const { blob, filename, layout, appended } = await agentService.exportBaseline(
+        workspaceSlug,
+        projectId,
+        current.id
+      );
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setToast({
+        type: "success",
+        title: "Charte exportée",
+        message:
+          layout === "orbit"
+            ? `${filename} · mise en page Orbit (ajoutez un modèle Word à la bibliothèque pour utiliser le vôtre)`
+            : `${filename} · dans votre modèle « ${layout} »${appended ? `, ${appended} rubrique(s) ajoutée(s) en annexe` : ""}`,
+      });
+    } catch (error) {
+      setToast({ type: "error", title: "Export impossible", message: errorMessage(error) });
     } finally {
       setBusy(null);
     }
@@ -470,6 +503,14 @@ export const OrbitAgentBaseline = observer(function OrbitAgentBaseline({
               onClick={() => void validate()}
             />
           )}
+          <Button
+            stretch="auto"
+            variant="secondary"
+            size="md"
+            label="Exporter la charte (.docx)"
+            loading={busy === "export"}
+            onClick={() => void exportCharter()}
+          />
           {!isDraft && (
             <Link
               href={`/${workspaceSlug}/projects/${projectId}/issues`}
